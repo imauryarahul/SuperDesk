@@ -13,15 +13,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (state.status === 'orphaned') return <OrphanedAccount email={state.email} />
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
       <Sidebar
         workspaceName={state.workspace.name}
         displayName={state.profile.fullName ?? state.profile.email}
         role={state.profile.role}
       />
-      <main className="min-w-0 flex-1 px-10 py-10">
-        <div className="mx-auto max-w-3xl">{children}</div>
-      </main>
+      <main className="min-w-0 flex-1 overflow-auto">{children}</main>
     </div>
   )
 }

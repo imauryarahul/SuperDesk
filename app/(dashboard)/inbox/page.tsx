@@ -1,15 +1,37 @@
+import { requireWorkspace } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
+
+import { InboxClient, type ConvRow } from './inbox-client'
+
 export const metadata = { title: 'Inbox · SuperDesk' }
 
-export default function InboxPage() {
+// This page is the entry point for the live chat view.
+// It loads the initial conversation list server-side (fast first paint),
+// then hands off to InboxClient which manages all realtime state.
+export default async function InboxPage() {
+  const { profile, workspace } = await requireWorkspace()
+  const supabase = createClient()
+
+  const { data } = await supabase
+    .from('conversations')
+    .select(
+      'id, status, last_message_at, channel, contacts(id, email, anonymous_token)',
+    )
+    .eq('workspace_id', workspace.id)
+    .eq('status', 'open')
+    .order('last_message_at', { ascending: false })
+    .limit(50)
+
+  const conversations = (data ?? []) as unknown as ConvRow[]
+
   return (
-    <>
-      <h1 className="text-xl font-semibold tracking-tight">Inbox</h1>
-      <p className="mt-1 text-sm text-slate-500">
-        Chat and email conversations will land here.
-      </p>
-      <div className="mt-6 rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center text-sm text-slate-500">
-        Nothing here yet. The chat widget and email channel are not built.
-      </div>
-    </>
+    <div className="flex h-full flex-col">
+      <InboxClient
+        workspaceId={workspace.id}
+        profileId={profile.id}
+        profileName={profile.fullName ?? profile.email}
+        initialConversations={conversations}
+      />
+    </div>
   )
 }

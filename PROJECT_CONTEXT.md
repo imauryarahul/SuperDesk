@@ -66,8 +66,8 @@ Additions to the original sketch, all deliberate:
 **RLS mechanics:** policies compare `workspace_id` to `private.current_workspace_id()`, a `SECURITY DEFINER` helper. It sits in `private` rather than `public` because Supabase grants EXECUTE on all public functions to `anon`/`authenticated`, which would expose it over REST. Signup and invite acceptance run through `public.create_workspace_with_admin` / `public.accept_workspace_invite`, `SECURITY DEFINER` and granted to `service_role` only, so each multi-table write is atomic and unreachable from the browser. Role escalation is blocked by column-level grants: `authenticated` may only ever UPDATE `profiles.full_name`.
 
 ## Build sequence (one prompt per phase, roughly)
-1. **Done.** Scaffold, DB schema + RLS, auth, team roles, workspace creation, invite flow, empty dashboard shell. Invites are delivered as a shared link, not email — outbound email lands in phase 3. Rate limiting deferred to phase 2 with the widget API routes.
-2. Chat widget + realtime messaging + typing/presence + dashboard-side live chat view
+1. **Done.** Scaffold, DB schema + RLS, auth, team roles, workspace creation, invite flow, empty dashboard shell. Invites are delivered as a shared link, not email — outbound email lands in phase 3.
+2. **Done.** Embeddable chat widget (Shadow DOM, esbuild bundle ~21 KB gzipped), CORS-validated API routes, Supabase Realtime (broadcast messages, typing, presence), dashboard live chat view with Postgres Changes, reconnect re-fetch. Rate limiting deferred to phase 3 alongside the email channel.
 3. Email channel: Postmark inbound webhook, threading, reply-from-dashboard
 4. Unified inbox: merge chat + email views, filters, assign/snooze/resolve
 5. Knowledge base: editor, categories, public page + search, widget auto-suggest

@@ -1,0 +1,18 @@
+---
+description: Require manual user verification before any git action
+alwaysApply: true
+---
+
+# Git Actions Require Manual Verification
+
+Any action that uses git (commit, push, pull, branch rename/delete, remote
+changes, `gh` commands affecting the repo, etc.) must be explicitly confirmed
+by the user before execution, even if it seems routine or was implied by an
+earlier instruction.
+
+- Before running the command, state exactly what git action you intend to
+  take and why.
+- Wait for explicit user confirmation ("yes", "go ahead", etc.) before
+  running it.
+- This applies regardless of whether the command would normally be
+  auto-approved.

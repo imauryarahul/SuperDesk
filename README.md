@@ -1,9 +1,14 @@
 # SuperDesk
 
-Customer communication platform. This repository currently contains **phase 1 only**:
-database schema, tenant isolation, authentication, team roles, the invite flow, and
-an empty dashboard shell. Chat, email, knowledge base, AI and custom domains are not
-built yet — see [Deferred](#deferred).
+Customer communication platform. Phases 1–2 are built and verified.
+
+**Phase 1:** database schema, tenant isolation, authentication, team roles, invite flow,
+dashboard shell.
+
+**Phase 2:** embeddable chat widget, Supabase Realtime (messages, typing, presence),
+API routes with Origin-header CORS validation, and the dashboard live chat view.
+
+Email, knowledge base, AI and custom domains are not built yet — see [Deferred](#deferred).
 
 Stack: Next.js 14 (App Router) · TypeScript (strict) · Tailwind · Supabase (Postgres,
 Auth, RLS).
@@ -13,6 +18,7 @@ Auth, RLS).
 ```bash
 npm install
 cp .env.local.example .env.local   # fill in the three Supabase values
+npm run widget:build               # compile public/widget.js once
 npm run dev
 ```
 
@@ -115,11 +121,71 @@ to another workspace is rejected at invite time rather than at accept time.
 
 Delivery is by shared link, not email — outbound email arrives with Postmark in phase 3.
 
+## Chat widget
+
+### Embedding on a site
+
+```html
+<script
+  src="https://[your-app-domain]/widget.js"
+  data-workspace-id="YOUR_WORKSPACE_UUID"
+></script>
+```
+
+The script reads `data-workspace-id` and boots automatically. For sites that identify
+users, call the global before or after the tag:
+
+```js
+window.SuperDesk.boot({ workspaceId: 'YOUR_WORKSPACE_UUID', email: 'user@example.com' })
+```
+
+### Origin validation
+
+Every widget API route validates the request's `Origin` header against the workspace's
+`allowed_widget_domains` array. **A request from an unlisted origin is rejected with
+HTTP 403.** Add each domain that hosts the embedded widget to that array:
+
+- In the Supabase Table Editor: open the `workspaces` row, edit `allowed_widget_domains`.
+- Include the scheme and port exactly: `http://localhost:5500`, `https://yoursite.com`.
+
+### Local cross-origin testing
+
+The test page at `test.html` must be served from a separate port so it is a genuine
+cross-origin request (Origin-header checking is bypassed for `file://` pages and
+same-origin requests):
+
+```bash
+# In one terminal — Next.js app (default port 3000)
+npm run dev
+
+# In another terminal — static server for the test page
+npx serve -l 5500 .
+# Then open http://localhost:5500/test.html
+```
+
+Add `http://localhost:5500` to `allowed_widget_domains` before opening the test page.
+Replace `PASTE_WORKSPACE_ID_HERE` in `test.html` with your workspace UUID from the
+`workspaces` table.
+
+### Widget bundle
+
+Built separately from the Next.js app using esbuild:
+
+```bash
+npm run widget:build   # one-off, outputs public/widget.js
+npm run widget:watch   # dev mode, rebuilds on change
+```
+
+The `build` script (`next build`) also runs `widget:build` automatically.
+
+Bundle: ~70 KB raw / ~21 KB gzipped (includes `@supabase/realtime-js` for
+WebSocket + Presence). The widget uses Shadow DOM (`mode: 'closed'`) so host page
+styles cannot reach it.
+
 ## Deferred
 
-Not attempted in this phase, in build order: chat widget and realtime, Postmark email
-channel, unified inbox with filters and assignment, knowledge base editor and public
-pages, AI summarisation, custom domains.
+Not attempted yet, in build order: Postmark email channel, unified inbox with filters
+and assignment, knowledge base editor and public pages, AI summarisation, custom domains.
 
 Also deliberately left out of the foundation:
 

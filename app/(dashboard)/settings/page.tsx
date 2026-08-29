@@ -14,7 +14,8 @@ export default async function SettingsPage() {
   const isAdmin = profile.role === 'admin'
 
   return (
-    <>
+    <div className="px-10 py-10">
+      <div className="mx-auto max-w-3xl">
       <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
       <p className="mt-1 text-sm text-slate-500">Workspace and team.</p>
 
@@ -41,7 +42,8 @@ export default async function SettingsPage() {
           </>
         ) : null}
       </div>
-    </>
+      </div>
+    </div>
   )
 }
 
