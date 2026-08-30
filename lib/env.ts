@@ -89,6 +89,37 @@ export function openaiApiKey(): string {
   )
 }
 
+export type VercelConfig = { token: string; projectId: string; teamId: string | null }
+
+/**
+ * Custom domains, via the Vercel Domains API.
+ *
+ * teamId is deliberately optional rather than required: every request needs it
+ * when the project lives under a Vercel team and every request must omit it
+ * when the project lives on a personal account, so there is no single correct
+ * default. `vercel project ls`, or the /teamslug/project shape of the project's
+ * dashboard URL, tells you which case you are in.
+ */
+/** Whether this deployment can talk to the Vercel Domains API at all. */
+export function isVercelConfigured(): boolean {
+  return Boolean(process.env.VERCEL_API_TOKEN && process.env.VERCEL_PROJECT_ID)
+}
+
+export function vercelConfig(): VercelConfig {
+  return {
+    token: required(
+      'VERCEL_API_TOKEN',
+      'Create one at https://vercel.com/account/tokens with scope over the project.',
+    ),
+    projectId: required(
+      'VERCEL_PROJECT_ID',
+      'Project Settings > General > Project ID in the Vercel dashboard.',
+    ),
+    // Empty string and unset both mean "personal account".
+    teamId: process.env.VERCEL_TEAM_ID?.trim() || null,
+  }
+}
+
 export function appUrl(): string {
   const configured = process.env.NEXT_PUBLIC_APP_URL
   if (configured) return configured.replace(/\/$/, '')

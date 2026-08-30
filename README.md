@@ -43,10 +43,15 @@ npm run dev
 | `SUPABASE_SERVICE_ROLE_KEY`     | Project Settings → API keys | **Server only.** Signup and the invite page fail loudly without it. |
 | `NEXT_PUBLIC_APP_URL`           | —                           | Base URL for invite links. Defaults to `http://localhost:3000`.     |
 | `OPENAI_API_KEY`                | platform.openai.com/api-keys| Issue summaries and reply drafts. See [AI features](#ai-features).  |
+| `VERCEL_API_TOKEN`              | vercel.com/account/tokens   | Custom domains. See [Custom domains](#custom-domains).              |
+| `VERCEL_PROJECT_ID`             | Project Settings → General  | Custom domains.                                                     |
+| `VERCEL_TEAM_ID`                | Team Settings → General     | **Only if the project sits under a Vercel team.** Omit otherwise.    |
 
 The five `POSTMARK_*` variables are only needed for the email channel; see
 [Configuring Postmark](#configuring-postmark). `OPENAI_API_KEY` is only needed for AI
-summaries and drafts. Chat works without either.
+summaries and drafts. The `VERCEL_*` variables are only needed for custom domains, and
+settings says so plainly rather than failing at submit time when they are absent. Chat
+works without any of them.
 
 
 Two Supabase dashboard settings matter for local testing:
@@ -381,9 +386,111 @@ Both routes are rate-limited per workspace (20 summaries / 15 drafts per minute)
 the same `rate_limit_windows` table used by every other route, since each call has a
 real dollar cost unlike most of the app.
 
+## Custom domains
+
+A workspace can serve its help centre at its own hostname — `help.acme.com` instead of
+`/kb/acme`. Settings → Custom domain is admin-only and has three actions: connect, check
+verification, disconnect.
+
+### Setup
+
+1. Create a Vercel token at [vercel.com/account/tokens](https://vercel.com/account/tokens)
+   with access to the project, and put it in `VERCEL_API_TOKEN`.
+2. Copy the project id from Project Settings → General into `VERCEL_PROJECT_ID`.
+3. If the project sits under a Vercel team rather than a personal account, set
+   `VERCEL_TEAM_ID` too. Every Domains API call needs it when the project is on a team and
+   must omit it when it is not, so there is no safe default — the project's dashboard URL
+   (`/team-slug/project` vs `/username/project`) tells you which case you are in.
+
+### The flow
+
+Connecting a domain calls `POST /v10/projects/{id}/domains`, stores `custom_domain`, and
+sets `custom_domain_status` to `pending`. Nothing else. The settings page then reads
+`GET /v6/domains/{domain}/config` and shows the DNS records Vercel returned for *this*
+project — an `A` record for a root domain, a `CNAME` for a subdomain, plus any `TXT`
+ownership challenge — rather than the general-purpose values in Vercel's docs, which are
+not always the right ones.
+
+"Check verification" is on demand, triggered by the admin. It calls
+`GET /v9/projects/{id}/domains/{domain}` and promotes the status to `verified` only when
+Vercel reports both that ownership is verified *and* that the configuration is not
+misconfigured. Ownership alone is not enough: a domain whose DNS does not point here has
+no certificate and does not work, so calling it verified would be a lie. Anything short of
+both stays `pending`, and a domain that has fallen off the Vercel project becomes `error`.
+`custom_domain_verified_at` is written once, on first success, and never cleared — "never
+worked" and "worked and then broke" are different facts when something goes wrong.
+
+There is no background polling job. DNS propagation takes minutes to hours, and a button
+an admin presses when they have finished editing their zone file is a better trigger than
+a cron sweeping every claimed domain forever.
+
+### SSL
+
+Nothing to build. Vercel provisions and renews the certificate itself once the domain
+verifies, which is the main reason the domain is registered with Vercel rather than just
+recorded in our database. The middleware passes `/.well-known/*` through untouched so
+nothing here can interfere with a renewal.
+
+### Routing, and the domain-hijack guard
+
+`middleware.ts` resolves the `Host` header before anything else. A request on a hostname
+that belongs to the app (`localhost`, `NEXT_PUBLIC_APP_URL`, any `*.vercel.app`) is left
+alone. Anything else is looked up against `workspaces.custom_domain`, and then:
+
+| Host state                       | Result                                              |
+| -------------------------------- | --------------------------------------------------- |
+| No workspace claims it           | Falls through to the normal app                     |
+| Claimed, `custom_domain_status` ≠ `verified` | Bare `404`, `no-store`, on every path    |
+| Claimed and `verified`           | `/` → `/kb/{slug}`, `/{article}` → `/kb/{slug}/{article}` |
+
+The middle row is the security property, not a UX detail. `custom_domain` is whatever an
+admin typed into a form, so a claim proves nothing about ownership. If an unverified claim
+served content, anyone could enter a hostname they do not control and have our edge serve
+their workspace's help centre the moment that hostname happened to resolve here. So an
+unverified claim resolves to nobody's help centre — not the claimant's, not anyone
+else's — and the refusal is `no-store` so it cannot outlive the verification that fixes it.
+
+A verified domain gets the public help centre and nothing else. `/api`, `/inbox`,
+`/settings`, `/knowledge-base`, `/login`, `/signup`, `/invite`, and paths deeper than one
+segment all 404, because a customer-controlled hostname serving our login page and our API
+under its own origin would hand that customer a same-origin foothold for free. Requests to
+`/kb/{slug}/…` on a custom domain are 307'd to the root-relative equivalent, so the
+absolute links the help centre pages emit resolve to one canonical URL per host.
+
+The decision itself lives in `lib/custom-domain.ts` as a pure function over
+`(pathname, route)`, with `scripts/custom-domain.test.mjs` (`npm run test:custom-domain`)
+asserting each row of that table. Keeping it out of the request plumbing is what makes it
+testable without a database or a running server.
+
+Two implementation notes. The lookup uses the service role, not the `anon` client, because
+`custom_domain` and `custom_domain_status` are deliberately absent from `anon`'s column
+grants — which workspace owns which hostname is not public information, and widening the
+grant to serve one internal query would publish every workspace's domain over the REST
+API. And it builds its own client rather than importing `lib/supabase/admin.ts`, which
+imports `server-only`; that module only resolves to a no-op under the `react-server`
+condition, which the Edge middleware bundle is not compiled with.
+
+Resolutions are cached in-process for 30 seconds so a burst of traffic to one help centre
+costs one query. The cost of that window is that a just-disconnected domain can serve for
+up to 30 seconds from a warm isolate. Disconnect clears our row before detaching the
+domain at Vercel, because our row is what the router reads.
+
 ## Deferred
 
-Not attempted yet, in build order: custom domains, analytics dashboard.
+Not attempted yet: analytics dashboard.
+
+Left out of custom domains on purpose:
+
+- **Background verification polling.** On-demand only, as above. A `pending` domain that
+  the admin never comes back to check stays `pending` forever even after its DNS lands.
+- **Changing a domain in place.** Connecting requires disconnecting the current one first.
+  Supporting a swap means keeping two domains attached to the Vercel project mid-flight
+  and reconciling if either half fails; refusing is one line and loses nothing.
+- **Apex-plus-`www` pairs.** One hostname per workspace. A customer wanting both would add
+  the redirect at their DNS provider.
+- **Per-workspace domain limits and abuse metering beyond rate limiting.** Connect is
+  capped at 5/min and check at 20/min per workspace, which stops scripted abuse but does
+  not stop a workspace from cycling through domains over hours.
 
 Left out of the email channel on purpose:
 

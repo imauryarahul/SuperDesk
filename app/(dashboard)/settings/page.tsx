@@ -1,11 +1,13 @@
 import { Alert, RoleBadge } from '@/components/ui'
 import { requireWorkspace } from '@/lib/auth'
-import { appUrl } from '@/lib/env'
+import { appUrl, isVercelConfigured } from '@/lib/env'
 import { inboundAddressFor } from '@/lib/postmark'
 import { createClient } from '@/lib/supabase/server'
+import { dnsRecordsFor, getDomainConfig, getProjectDomain, type DnsRecord } from '@/lib/vercel'
 
 import { revokeInviteAction } from './actions'
 import { CopyLink, CopySnippet } from './copy-link'
+import { CustomDomainPanel } from './custom-domain'
 import { InviteForm } from './invite-form'
 
 export const metadata = { title: 'Settings · SuperDesk' }
@@ -34,6 +36,10 @@ export default async function SettingsPage() {
 
         <Card title="Chat widget">
           <WidgetEmbed workspaceId={workspace.id} />
+        </Card>
+
+        <Card title="Custom domain">
+          <CustomDomain canManage={isAdmin} />
         </Card>
 
         <Card title="Team">
@@ -114,6 +120,62 @@ function WidgetEmbed({ workspaceId }: { workspaceId: string }) {
         <code className="rounded bg-slate-100 px-1">https://klassklub.com</code>.
       </p>
     </div>
+  )
+}
+
+/**
+ * The DNS records are fetched from Vercel here rather than being carried around
+ * in form state, so a reload shows the live answer instead of whatever the last
+ * submit happened to return. Only while a domain exists and is not yet verified
+ * — a verified domain needs no instructions, and no domain needs no call.
+ */
+async function CustomDomain({ canManage }: { canManage: boolean }) {
+  const { data, error } = await createClient()
+    .from('workspaces')
+    .select('custom_domain, custom_domain_status, custom_domain_verified_at')
+    .maybeSingle()
+
+  if (error || !data) {
+    return <Alert tone="error">Could not load your custom domain settings.</Alert>
+  }
+
+  if (!isVercelConfigured()) {
+    return (
+      <Alert tone="info">
+        Custom domains are not configured on this deployment. Set VERCEL_API_TOKEN and
+        VERCEL_PROJECT_ID (plus VERCEL_TEAM_ID if the project sits under a Vercel team).
+      </Alert>
+    )
+  }
+
+  let records: DnsRecord[] = []
+  let recordsError: string | null = null
+
+  if (data.custom_domain && data.custom_domain_status !== 'verified') {
+    try {
+      const projectDomain = await getProjectDomain(data.custom_domain)
+      if (projectDomain) {
+        records = dnsRecordsFor(projectDomain, await getDomainConfig(data.custom_domain))
+      } else {
+        recordsError = `${data.custom_domain} is not attached to this Vercel project. Disconnect it and add it again.`
+      }
+    } catch (lookupError) {
+      // A settings page that fails to render because Vercel is slow is worse
+      // than one that renders without the DNS table.
+      console.error('[custom-domain] could not load DNS records:', lookupError)
+      recordsError = 'Could not reach Vercel to load the DNS records. Try reloading.'
+    }
+  }
+
+  return (
+    <CustomDomainPanel
+      canManage={canManage}
+      domain={data.custom_domain}
+      status={data.custom_domain_status}
+      verifiedAt={data.custom_domain_verified_at}
+      records={records}
+      recordsError={recordsError}
+    />
   )
 }
 

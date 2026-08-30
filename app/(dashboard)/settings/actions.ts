@@ -5,10 +5,19 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
 import { requireAdmin } from '@/lib/auth'
-import { appUrl } from '@/lib/env'
+import { normalizeDomain, unclaimableDomainReason } from '@/lib/custom-domain'
+import { appUrl, vercelConfig } from '@/lib/env'
 import { ActionError, toFormError, type FormState } from '@/lib/forms'
+import { checkRateLimit } from '@/lib/rate-limit'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+import {
+  addProjectDomain,
+  getDomainConfig,
+  getProjectDomain,
+  removeProjectDomain,
+  VercelApiError,
+} from '@/lib/vercel'
 
 export type InviteFormState = FormState & { inviteUrl?: string; invitedEmail?: string }
 
@@ -100,4 +109,263 @@ export async function revokeInviteAction(formData: FormData): Promise<void> {
   if (error) throw error
 
   revalidatePath('/settings')
+}
+
+// Custom domains -------------------------------------------------------------
+
+export type CustomDomainFormState = FormState & { message?: string }
+
+const domainSchema = z.string().trim().min(1, 'Enter a domain.').max(253)
+
+/**
+ * Attaches a hostname to the Vercel project and records the claim as 'pending'.
+ *
+ * It never records it as anything else. Verification is a separate, explicit
+ * step, so nothing an admin types into this form can cause their workspace's
+ * help centre to be served on a hostname they have not proven they own.
+ */
+export async function connectCustomDomainAction(
+  _prevState: CustomDomainFormState,
+  formData: FormData,
+): Promise<CustomDomainFormState> {
+  try {
+    const { workspace } = await requireAdmin()
+    assertVercelConfigured()
+
+    const parsed = domainSchema.safeParse(formData.get('domain'))
+    if (!parsed.success) {
+      throw new ActionError(parsed.error.issues[0]?.message ?? 'Enter a domain.')
+    }
+
+    const domain = normalizeDomain(parsed.data)
+    if (!domain) {
+      throw new ActionError(
+        'That does not look like a domain. Use a hostname such as help.yourcompany.com.',
+      )
+    }
+
+    const reason = unclaimableDomainReason(domain, new URL(appUrl()).hostname)
+    if (reason) throw new ActionError(reason)
+
+    const current = await loadCustomDomain(workspace.id)
+    if (current.custom_domain) {
+      throw new ActionError(
+        `${current.custom_domain} is already connected. Disconnect it first to use a different domain.`,
+      )
+    }
+
+    // Each attempt costs a Vercel API call and can attach a domain to the
+    // project, so it is metered per workspace rather than left unbounded.
+    if (!(await checkRateLimit(workspace.id, 'domain:connect', 60, 5))) {
+      throw new ActionError('Too many attempts. Wait a minute and try again.')
+    }
+
+    // Checked before touching Vercel: the unique index would catch it either
+    // way, but only after we had already attached someone else's domain to the
+    // project, which we would then have no safe way to undo.
+    await assertDomainUnclaimed(domain)
+
+    try {
+      await addProjectDomain(domain)
+    } catch (error) {
+      throw asDomainActionError(error, domain)
+    }
+
+    const { error } = await createClient()
+      .from('workspaces')
+      .update({
+        custom_domain: domain,
+        custom_domain_status: 'pending',
+        custom_domain_verified_at: null,
+      })
+      .eq('id', workspace.id)
+
+    if (error) {
+      // Leave nothing half-done: the domain is on the project but no workspace
+      // claims it, which would block any later attempt to connect it properly.
+      await removeProjectDomain(domain).catch((cleanupError: unknown) => {
+        console.error('[custom-domain] rollback failed:', cleanupError)
+      })
+      throw error
+    }
+
+    revalidatePath('/settings')
+    return { error: null, message: `${domain} added. Add the DNS records below, then check it.` }
+  } catch (error) {
+    return toFormError(error, 'connectCustomDomainAction')
+  }
+}
+
+/**
+ * On-demand verification. Deliberately not a background job: DNS propagation is
+ * measured in minutes to hours, and an admin clicking a button is a better
+ * trigger than a cron that polls every claimed domain forever.
+ *
+ * 'verified' requires two separate things Vercel reports, ownership *and* a
+ * resolvable configuration, because a domain whose ownership checks out but
+ * whose DNS does not point here has no certificate and does not work. Anything
+ * short of both stays 'pending'.
+ */
+export async function checkCustomDomainAction(
+  _prevState: CustomDomainFormState,
+  _formData: FormData,
+): Promise<CustomDomainFormState> {
+  try {
+    const { workspace } = await requireAdmin()
+    assertVercelConfigured()
+
+    const current = await loadCustomDomain(workspace.id)
+    const domain = current.custom_domain
+    if (!domain) throw new ActionError('No domain is connected.')
+
+    if (!(await checkRateLimit(workspace.id, 'domain:check', 60, 20))) {
+      throw new ActionError('Too many checks. Wait a minute and try again.')
+    }
+
+    let status: 'pending' | 'verified' | 'error'
+    let message: string
+
+    try {
+      const projectDomain = await getProjectDomain(domain)
+
+      if (!projectDomain) {
+        status = 'error'
+        message = `${domain} is no longer attached to this Vercel project. Disconnect it and add it again.`
+      } else if (!projectDomain.verified) {
+        status = 'pending'
+        message = 'Vercel has not verified ownership yet. Add the records below and check again.'
+      } else {
+        const config = await getDomainConfig(domain)
+        status = config.misconfigured ? 'pending' : 'verified'
+        message = config.misconfigured
+          ? 'Ownership is verified, but the DNS records are not pointing here yet. This can take up to an hour to propagate.'
+          : `${domain} is verified and serving your help centre. Vercel has provisioned the certificate.`
+      }
+    } catch (error) {
+      throw asDomainActionError(error, domain)
+    }
+
+    const { error } = await createClient()
+      .from('workspaces')
+      .update({
+        custom_domain_status: status,
+        // Written once, on the first success, and never cleared by a later
+        // regression: "verified in the past" and "never verified" are different
+        // facts when something breaks.
+        ...(status === 'verified' && !current.custom_domain_verified_at
+          ? { custom_domain_verified_at: new Date().toISOString() }
+          : {}),
+      })
+      .eq('id', workspace.id)
+
+    if (error) throw error
+
+    revalidatePath('/settings')
+    return { error: null, message }
+  } catch (error) {
+    return toFormError(error, 'checkCustomDomainAction')
+  }
+}
+
+export async function disconnectCustomDomainAction(): Promise<void> {
+  const { workspace } = await requireAdmin()
+  const current = await loadCustomDomain(workspace.id)
+
+  // Our row first. It is what the router reads, so clearing it is what actually
+  // stops the domain serving; detaching it at Vercel is housekeeping and must
+  // not be able to leave the domain live because it failed.
+  const { error } = await createClient()
+    .from('workspaces')
+    .update({
+      custom_domain: null,
+      custom_domain_status: 'none',
+      custom_domain_verified_at: null,
+    })
+    .eq('id', workspace.id)
+
+  if (error) throw error
+
+  if (current.custom_domain) {
+    await removeProjectDomain(current.custom_domain).catch((cleanupError: unknown) => {
+      console.error('[custom-domain] detach from project failed:', cleanupError)
+    })
+  }
+
+  revalidatePath('/settings')
+}
+
+type CustomDomainRow = {
+  custom_domain: string | null
+  custom_domain_verified_at: string | null
+}
+
+async function loadCustomDomain(workspaceId: string): Promise<CustomDomainRow> {
+  const { data, error } = await createClient()
+    .from('workspaces')
+    .select('custom_domain, custom_domain_verified_at')
+    .eq('id', workspaceId)
+    .maybeSingle()
+
+  if (error) throw error
+  if (!data) throw new ActionError('Could not load your workspace.')
+  return data
+}
+
+/**
+ * custom_domain is unique, so this is also enforced by the database. Reading it
+ * first, across workspaces (hence the admin client), turns a constraint
+ * violation into an answer the admin can act on.
+ */
+async function assertDomainUnclaimed(domain: string): Promise<void> {
+  const { data, error } = await createAdminClient()
+    .from('workspaces')
+    .select('id')
+    .eq('custom_domain', domain)
+    .maybeSingle()
+
+  if (error) throw error
+  if (data) {
+    throw new ActionError('That domain is already connected to another SuperDesk workspace.')
+  }
+}
+
+/** Missing Vercel credentials are a deployment problem; say so instead of "something went wrong". */
+function assertVercelConfigured(): void {
+  try {
+    vercelConfig()
+  } catch (error) {
+    throw new ActionError(
+      error instanceof Error
+        ? error.message
+        : 'Custom domains are not configured on this deployment.',
+    )
+  }
+}
+
+/**
+ * Maps a Vercel failure to something an admin can act on. Anything else is
+ * passed through untouched so toFormError logs it and shows the generic message.
+ */
+function asDomainActionError(error: unknown, domain: string): unknown {
+  if (!(error instanceof VercelApiError)) return error
+
+  console.error(`[custom-domain] vercel ${error.status}/${error.code} for ${domain}:`, error.message)
+
+  if (error.code === 'timeout' || error.code === 'network_error') {
+    return new ActionError('Vercel did not respond. Try again in a moment.')
+  }
+  if (error.status === 401 || error.status === 403) {
+    return new ActionError(
+      'Vercel rejected our API token. Check VERCEL_API_TOKEN, and VERCEL_TEAM_ID if the project sits under a team.',
+    )
+  }
+  if (error.status === 409) {
+    return new ActionError(
+      `${domain} is already in use by another Vercel project or account. Remove it there first.`,
+    )
+  }
+  if (error.status === 400) {
+    return new ActionError(`Vercel rejected that domain: ${error.message}`)
+  }
+  return new ActionError('Vercel could not process that request. Try again.')
 }

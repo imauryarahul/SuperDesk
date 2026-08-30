@@ -361,6 +361,8 @@ export type Database = {
           allowed_widget_domains: string[]
           created_at: string
           custom_domain: string | null
+          custom_domain_status: Database["public"]["Enums"]["custom_domain_status"]
+          custom_domain_verified_at: string | null
           id: string
           inbound_token: string
           name: string
@@ -371,6 +373,8 @@ export type Database = {
           allowed_widget_domains?: string[]
           created_at?: string
           custom_domain?: string | null
+          custom_domain_status?: Database["public"]["Enums"]["custom_domain_status"]
+          custom_domain_verified_at?: string | null
           id?: string
           inbound_token?: string
           name: string
@@ -381,6 +385,8 @@ export type Database = {
           allowed_widget_domains?: string[]
           created_at?: string
           custom_domain?: string | null
+          custom_domain_status?: Database["public"]["Enums"]["custom_domain_status"]
+          custom_domain_verified_at?: string | null
           id?: string
           inbound_token?: string
           name?: string
@@ -439,6 +445,7 @@ export type Database = {
     Enums: {
       conversation_channel: "chat" | "email"
       conversation_status: "open" | "snoozed" | "resolved"
+      custom_domain_status: "none" | "pending" | "verified" | "error"
       message_sender_type: "contact" | "agent" | "system"
       user_role: "admin" | "agent"
     }
@@ -570,6 +577,7 @@ export const Constants = {
     Enums: {
       conversation_channel: ["chat", "email"],
       conversation_status: ["open", "snoozed", "resolved"],
+      custom_domain_status: ["none", "pending", "verified", "error"],
       message_sender_type: ["contact", "agent", "system"],
       user_role: ["admin", "agent"],
     },

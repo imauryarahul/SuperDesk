@@ -11,6 +11,7 @@
     "test:kb-html": "node scripts/kb-html.test.mjs",
     "test:kb-smoke": "node scripts/kb-dashboard-smoke.mjs",
     "test:ai-transcript": "node scripts/ai-transcript.test.mjs",
+    "test:custom-domain": "node scripts/custom-domain.test.mjs",
     "widget:build": "node widget/build.mjs",
     "widget:watch": "node widget/build.mjs --watch"
   },
