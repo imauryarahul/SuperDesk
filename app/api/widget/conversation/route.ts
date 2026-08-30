@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { checkRateLimit, getRequestIp, rateLimitedResponse } from '@/lib/rate-limit'
 import { broadcast } from '@/lib/realtime-broadcast'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { checkWidgetOrigin, corsHeaders, handlePreflight } from '@/lib/widget-cors'
@@ -18,6 +19,11 @@ export async function POST(req: Request) {
 
   const check = await checkWidgetOrigin(req, workspaceId)
   if (!check.ok) return check.response
+
+  // 10 conversation resume/creates per IP per workspace per minute.
+  const ip = getRequestIp(req)
+  const allowed = await checkRateLimit(ip, `ws:${workspaceId}:conv`, 60, 10)
+  if (!allowed) return rateLimitedResponse(check.origin)
 
   let rawBody: unknown
   try {

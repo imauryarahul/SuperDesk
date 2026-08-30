@@ -394,6 +394,15 @@ export type Database = {
         }
         Returns: string
       }
+      increment_rate_limit: {
+        Args: {
+          p_ip: string
+          p_scope: string
+          p_window_sec: number
+          p_max: number
+        }
+        Returns: boolean
+      }
     }
     Enums: {
       conversation_channel: "chat" | "email"

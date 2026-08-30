@@ -1,11 +1,18 @@
 'use server'
 
 import { redirect } from 'next/navigation'
+import { headers } from 'next/headers'
 import { z } from 'zod'
 
 import { ActionError, toFormError, type FormState } from '@/lib/forms'
+import { checkRateLimit } from '@/lib/rate-limit'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+
+function getActionIp(): string {
+  const h = headers()
+  return h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? h.get('x-real-ip') ?? 'unknown'
+}
 
 export type AuthFormState = FormState & { notice?: string }
 
@@ -35,6 +42,10 @@ export async function signUpAction(
   let needsEmailConfirmation = false
 
   try {
+    // 5 signup attempts per IP per 5 minutes prevents mass account creation.
+    const allowed = await checkRateLimit(getActionIp(), 'auth:signup', 300, 5)
+    if (!allowed) throw new ActionError('Too many signup attempts. Wait a few minutes and try again.')
+
     const input = parse(signUpSchema, formData)
     const supabase = createClient()
 
@@ -103,6 +114,10 @@ export async function signInAction(
   let destination: string
 
   try {
+    // 20 login attempts per IP per minute is generous for humans, tight for bots.
+    const allowed = await checkRateLimit(getActionIp(), 'auth:signin', 60, 20)
+    if (!allowed) throw new ActionError('Too many login attempts. Wait a minute and try again.')
+
     const input = parse(signInSchema, formData)
     const supabase = createClient()
 

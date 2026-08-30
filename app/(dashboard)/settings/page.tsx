@@ -5,7 +5,7 @@ import { inboundAddressFor } from '@/lib/postmark'
 import { createClient } from '@/lib/supabase/server'
 
 import { revokeInviteAction } from './actions'
-import { CopyLink } from './copy-link'
+import { CopyLink, CopySnippet } from './copy-link'
 import { InviteForm } from './invite-form'
 
 export const metadata = { title: 'Settings · SuperDesk' }
@@ -30,6 +30,10 @@ export default async function SettingsPage() {
 
         <Card title="Email address">
           <InboundAddress />
+        </Card>
+
+        <Card title="Chat widget">
+          <WidgetEmbed workspaceId={workspace.id} />
         </Card>
 
         <Card title="Team">
@@ -92,6 +96,22 @@ async function InboundAddress() {
       <p className="text-xs text-slate-500">
         Email this address, or forward your support inbox to it, and the thread appears in your
         inbox. Replies you send from the inbox come from this address too.
+      </p>
+    </div>
+  )
+}
+
+function WidgetEmbed({ workspaceId }: { workspaceId: string }) {
+  const snippet = `<script\n  src="${appUrl()}/widget.js"\n  data-workspace-id="${workspaceId}"\n></script>`
+
+  return (
+    <div className="space-y-2">
+      <CopySnippet text={snippet} />
+      <p className="text-xs text-slate-500">
+        Paste before <code className="rounded bg-slate-100 px-1">&lt;/body&gt;</code> on any site.
+        Add that site&apos;s origin to <code className="rounded bg-slate-100 px-1">allowed_widget_domains</code>
+        on this workspace (Supabase Table Editor → workspaces) — include scheme and host exactly, e.g.
+        <code className="rounded bg-slate-100 px-1">https://klassklub.com</code>.
       </p>
     </div>
   )

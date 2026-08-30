@@ -4,8 +4,10 @@ import { z } from 'zod'
 
 import { requireWorkspace } from '@/lib/auth'
 import { inboundAddressFor, newMessageId, replySubject, sendEmail } from '@/lib/postmark'
-import { broadcastNewMessage } from '@/lib/realtime-broadcast'
+import { broadcast, broadcastNewMessage } from '@/lib/realtime-broadcast'
 import { createAdminClient } from '@/lib/supabase/admin'
+
+import { CONV_SELECT } from './queries'
 
 const MAX_BODY = 2000
 /** Enough of the chain for a mail client to thread on; References is unbounded. */
@@ -185,28 +187,91 @@ async function sendEmailReply(
   return { ok: true, messageId, inReplyTo }
 }
 
+// ---------------------------------------------------------------------------
+// Status and assignment mutations
+// ---------------------------------------------------------------------------
+
+/**
+ * Sets conversation status to open, snoozed, or resolved.
+ * Broadcasts the updated row to the workspace inbox channel so all connected
+ * agents see the change without a page refresh.
+ */
 export async function setConversationStatusAction(
   conversationId: string,
-  status: 'open' | 'resolved',
+  status: 'open' | 'snoozed' | 'resolved',
 ): Promise<void> {
   const { workspace } = await requireWorkspace()
   const admin = createAdminClient()
+
   await admin
     .from('conversations')
     .update({ status })
     .eq('id', conversationId)
     .eq('workspace_id', workspace.id)
+
+  // Re-fetch the full row (with contact join) for the broadcast payload so
+  // every subscriber can update their local state without an extra round-trip.
+  const { data: updated } = await admin
+    .from('conversations')
+    .select(CONV_SELECT)
+    .eq('id', conversationId)
+    .maybeSingle()
+
+  if (updated) {
+    await broadcast({
+      topic: `inbox:${workspace.id}`,
+      event: 'conversation_updated',
+      payload: { conversation: updated as unknown as Record<string, unknown> },
+    })
+  }
 }
 
+/**
+ * Assigns (or unassigns) a conversation to an agent.
+ *
+ * Server-side check: the target agent must have a profile row in the same
+ * workspace. RLS is the final backstop, but an explicit query here returns a
+ * clear error instead of a silent no-op if someone bypasses the UI.
+ */
 export async function assignConversationAction(
   conversationId: string,
   agentId: string | null,
-): Promise<void> {
+): Promise<{ error: string | null }> {
   const { workspace } = await requireWorkspace()
   const admin = createAdminClient()
+
+  if (agentId !== null) {
+    const { data: agentProfile } = await admin
+      .from('profiles')
+      .select('id')
+      .eq('id', agentId)
+      .eq('workspace_id', workspace.id)
+      .maybeSingle()
+
+    if (!agentProfile) {
+      return { error: 'Agent does not belong to this workspace.' }
+    }
+  }
+
   await admin
     .from('conversations')
     .update({ assigned_agent_id: agentId })
     .eq('id', conversationId)
     .eq('workspace_id', workspace.id)
+
+  const { data: updated } = await admin
+    .from('conversations')
+    .select(CONV_SELECT)
+    .eq('id', conversationId)
+    .maybeSingle()
+
+  if (updated) {
+    await broadcast({
+      topic: `inbox:${workspace.id}`,
+      event: 'conversation_updated',
+      payload: { conversation: updated as unknown as Record<string, unknown> },
+    })
+  }
+
+  return { error: null }
 }
