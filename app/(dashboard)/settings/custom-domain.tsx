@@ -12,6 +12,7 @@ import {
   disconnectCustomDomainAction,
   type CustomDomainFormState,
 } from './actions'
+import { CopyIconButton } from './copy-link'
 
 type Status = Database['public']['Enums']['custom_domain_status']
 
@@ -167,9 +168,17 @@ function DnsInstructions({
             {records.map((record) => (
               <tr key={`${record.type}:${record.name}:${record.value}`} className="align-top">
                 <td className="px-3 py-2 font-mono text-slate-900">{record.type}</td>
-                <td className="px-3 py-2 font-mono text-slate-900">{record.name}</td>
                 <td className="px-3 py-2">
-                  <span className="break-all font-mono text-slate-900">{record.value}</span>
+                  <div className="flex items-start gap-0.5">
+                    <span className="min-w-0 break-all font-mono text-slate-900">{record.name}</span>
+                    <CopyIconButton text={record.name} label="name" />
+                  </div>
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex items-start gap-0.5">
+                    <span className="min-w-0 break-all font-mono text-slate-900">{record.value}</span>
+                    <CopyIconButton text={record.value} label="value" />
+                  </div>
                   {record.note ? (
                     <span className="mt-0.5 block font-sans text-slate-500">{record.note}</span>
                   ) : null}

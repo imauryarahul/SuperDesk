@@ -168,6 +168,37 @@ export async function getProjectDomain(domain: string): Promise<ProjectDomain | 
   }
 }
 
+export type VerifyProjectDomainResult = {
+  domain: ProjectDomain
+  /** Set when Vercel rejected the verify attempt (DNS not found or wrong yet). */
+  error: string | null
+}
+
+/**
+ * Ask Vercel to re-check DNS and flip `verified`. A GET alone never does this —
+ * Vercel's docs require POST after the records are in place. Returns the updated
+ * domain object either way; a 400 means the challenge is still outstanding.
+ */
+export async function verifyProjectDomain(domain: string): Promise<VerifyProjectDomainResult> {
+  try {
+    const raw = await vercelFetch<RawProjectDomain>(
+      `/v9/projects/{projectId}/domains/${encodeURIComponent(domain)}/verify`,
+      { method: 'POST' },
+    )
+    return { domain: toProjectDomain(raw), error: null }
+  } catch (error) {
+    if (!(error instanceof VercelApiError)) throw error
+
+    const current = await getProjectDomain(domain)
+    if (!current) throw error
+
+    if (error.status === 400) {
+      return { domain: current, error: error.message }
+    }
+    throw error
+  }
+}
+
 export async function removeProjectDomain(domain: string): Promise<void> {
   try {
     await vercelFetch(`/v9/projects/{projectId}/domains/${encodeURIComponent(domain)}`, {

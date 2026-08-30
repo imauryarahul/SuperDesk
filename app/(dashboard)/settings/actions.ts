@@ -16,6 +16,7 @@ import {
   getDomainConfig,
   getProjectDomain,
   removeProjectDomain,
+  verifyProjectDomain,
   VercelApiError,
 } from '@/lib/vercel'
 
@@ -226,20 +227,28 @@ export async function checkCustomDomainAction(
     let message: string
 
     try {
-      const projectDomain = await getProjectDomain(domain)
+      const attached = await getProjectDomain(domain)
 
-      if (!projectDomain) {
+      if (!attached) {
         status = 'error'
         message = `${domain} is no longer attached to this Vercel project. Disconnect it and add it again.`
-      } else if (!projectDomain.verified) {
-        status = 'pending'
-        message = 'Vercel has not verified ownership yet. Add the records below and check again.'
       } else {
-        const config = await getDomainConfig(domain)
-        status = config.misconfigured ? 'pending' : 'verified'
-        message = config.misconfigured
-          ? 'Ownership is verified, but the DNS records are not pointing here yet. This can take up to an hour to propagate.'
-          : `${domain} is verified and serving your help centre. Vercel has provisioned the certificate.`
+        const { domain: projectDomain, error: verifyError } = await verifyProjectDomain(domain)
+
+        if (verifyError) {
+          status = 'pending'
+          message = verificationPendingMessage(verifyError)
+        } else if (!projectDomain.verified) {
+          status = 'pending'
+          message =
+            'Vercel has not verified ownership yet. Add the records below and check again.'
+        } else {
+          const config = await getDomainConfig(domain)
+          status = config.misconfigured ? 'pending' : 'verified'
+          message = config.misconfigured
+            ? 'Ownership is verified, but the DNS records are not pointing here yet. This can take up to an hour to propagate.'
+            : `${domain} is verified and serving your help centre. Vercel has provisioned the certificate.`
+        }
       }
     } catch (error) {
       throw asDomainActionError(error, domain)
@@ -368,4 +377,19 @@ function asDomainActionError(error: unknown, domain: string): unknown {
     return new ActionError(`Vercel rejected that domain: ${error.message}`)
   }
   return new ActionError('Vercel could not process that request. Try again.')
+}
+
+/** Turn Vercel's verify 400 text into something an admin can act on. */
+function verificationPendingMessage(vercelMessage: string): string {
+  const lower = vercelMessage.toLowerCase()
+  if (lower.includes('txt') && lower.includes('does not match')) {
+    return 'The TXT verification record is wrong or still propagating. Match the value in the table below exactly, then check again.'
+  }
+  if (lower.includes('does not have a txt record')) {
+    return 'Vercel cannot see the TXT verification record yet. Add it from the table below — on most providers the name is just `_vercel`, not the full hostname.'
+  }
+  if (lower.includes('verified for another project')) {
+    return 'This domain is already verified on another Vercel project. Remove it there first, or add the TXT record shown below to prove ownership here.'
+  }
+  return `Vercel could not verify the domain yet: ${vercelMessage}`
 }
