@@ -120,9 +120,29 @@ export function vercelConfig(): VercelConfig {
   }
 }
 
+/** True when a value already carries a scheme (`https://…`, `http://…`). */
+function hasUrlScheme(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(value)
+}
+
+/**
+ * Base URL for invite links, widget embeds, and anywhere else the app needs
+ * its own origin. On Vercel, NEXT_PUBLIC_APP_URL is often set as a bare
+ * hostname (`app.example.com`) with no scheme; `new URL()` rejects that, so we
+ * prepend https:// (http:// for localhost / 127.0.0.1).
+ */
 export function appUrl(): string {
-  const configured = process.env.NEXT_PUBLIC_APP_URL
-  if (configured) return configured.replace(/\/$/, '')
+  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim()
+  if (configured) {
+    const withoutTrailingSlash = configured.replace(/\/$/, '')
+    if (hasUrlScheme(withoutTrailingSlash)) return withoutTrailingSlash
+
+    const isLocal =
+      withoutTrailingSlash.startsWith('localhost') ||
+      withoutTrailingSlash.startsWith('127.0.0.1') ||
+      withoutTrailingSlash.startsWith('[::1]')
+    return `${isLocal ? 'http' : 'https'}://${withoutTrailingSlash}`
+  }
   // Set automatically on Vercel deployments.
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
   return 'http://localhost:3000'
