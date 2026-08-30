@@ -13,12 +13,15 @@ import { sendAgentMessageAction, setConversationStatusAction } from './actions'
 // ---------------------------------------------------------------------------
 
 type ConvStatus = Database['public']['Enums']['conversation_status']
+type ConvChannel = Database['public']['Enums']['conversation_channel']
 
 export interface ConvRow {
   id: string
   status: ConvStatus
   last_message_at: string
-  channel: Database['public']['Enums']['conversation_channel']
+  channel: ConvChannel
+  /** Email threads carry the subject that opened them; chat has none. */
+  subject: string | null
   contacts: { id: string; email: string | null; anonymous_token: string | null } | null
 }
 
@@ -42,7 +45,8 @@ interface Props {
 type ConnectionStatus = 'connected' | 'connecting' | 'disconnected'
 type StatusFilter = 'open' | 'resolved'
 
-const CONV_SELECT = 'id, status, last_message_at, channel, contacts(id, email, anonymous_token)'
+export const CONV_SELECT =
+  'id, status, last_message_at, channel, subject, contacts(id, email, anonymous_token)'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -73,6 +77,38 @@ function sortConvs(list: ConvRow[]): ConvRow[] {
   return [...list].sort((a, b) => b.last_message_at.localeCompare(a.last_message_at))
 }
 
+/**
+ * Email and live chat share every component in this view, so the channel has to
+ * be legible at a glance — an agent replying in an email thread is writing
+ * something the customer reads in their mail client minutes later, not a chat
+ * message they are waiting on right now.
+ */
+function ChannelBadge({ channel }: { channel: ConvChannel }) {
+  const isEmail = channel === 'email'
+  return (
+    <span
+      className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium ${
+        isEmail ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 text-slate-500'
+      }`}
+    >
+      <ChannelIcon channel={channel} />
+      {isEmail ? 'Email' : 'Live chat'}
+    </span>
+  )
+}
+
+function ChannelIcon({ channel }: { channel: ConvChannel }) {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" className="h-3 w-3 shrink-0 fill-current">
+      {channel === 'email' ? (
+        <path d="M1.5 4.4A1.9 1.9 0 0 1 3.4 2.5h9.2a1.9 1.9 0 0 1 1.9 1.9v7.2a1.9 1.9 0 0 1-1.9 1.9H3.4a1.9 1.9 0 0 1-1.9-1.9V4.4Zm1.9-.4a.4.4 0 0 0-.36.58l4.6 3.45a.6.6 0 0 0 .72 0l4.6-3.45A.4.4 0 0 0 12.6 4H3.4Z" />
+      ) : (
+        <path d="M8 2C4.4 2 1.5 4.4 1.5 7.4c0 1.7.9 3.2 2.4 4.2l-.6 2.1a.4.4 0 0 0 .57.46l2.5-1.24c.5.1 1.04.16 1.6.16 3.6 0 6.5-2.4 6.5-5.4S11.6 2 8 2Z" />
+      )}
+    </svg>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -86,6 +122,9 @@ export function InboxClient({ workspaceId, profileId, profileName, initialConver
   const [connStatus, setConnStatus] = useState<ConnectionStatus>('connecting')
   const [onlineVisitors, setOnlineVisitors] = useState<Set<string>>(new Set())
   const [unread, setUnread] = useState<Set<string>>(new Set())
+  // Email sends fail for reasons the agent can act on (unverified sender, no
+  // address on the contact), so the reason is shown rather than just a red bubble.
+  const [sendError, setSendError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -131,6 +170,7 @@ export function InboxClient({ workspaceId, profileId, profileName, initialConver
 
   // ---- Load the selected thread ----
   useEffect(() => {
+    setSendError(null)
     if (!selectedId) {
       setMessages([])
       latestCreatedAtRef.current = ''
@@ -384,12 +424,15 @@ export function InboxClient({ workspaceId, profileId, profileName, initialConver
       e.preventDefault()
       const convId = selectedId
       if (!convId) return
-      const input = e.currentTarget.elements.namedItem('message') as HTMLInputElement
+      const input = e.currentTarget.elements.namedItem('message') as
+        | HTMLInputElement
+        | HTMLTextAreaElement
       const body = input.value.trim()
       if (!body) return
 
       const clientId = crypto.randomUUID()
       input.value = ''
+      setSendError(null)
       stopTyping()
 
       setMessages((prev) =>
@@ -421,6 +464,7 @@ export function InboxClient({ workspaceId, profileId, profileName, initialConver
           setMessages((prev) =>
             prev.map((m) => (m.id === clientId ? { ...m, optimistic: false, failed: true } : m)),
           )
+          setSendError(result.error)
         }
       })
     },
@@ -444,6 +488,7 @@ export function InboxClient({ workspaceId, profileId, profileName, initialConver
   )
 
   const selected = conversations.find((c) => c.id === selectedId) ?? null
+  const isEmail = selected?.channel === 'email'
 
   return (
     <div className="flex h-full">
@@ -530,10 +575,11 @@ export function InboxClient({ workspaceId, profileId, profileName, initialConver
                         {relativeTime(conv.last_message_at)}
                       </span>
                     </div>
+                    {conv.subject && (
+                      <p className="mt-0.5 truncate text-xs text-slate-500">{conv.subject}</p>
+                    )}
                     <div className="mt-1 flex items-center gap-1.5">
-                      <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs capitalize text-slate-500">
-                        {conv.channel}
-                      </span>
+                      <ChannelBadge channel={conv.channel} />
                       {visitorOnline && (
                         <span className="flex items-center gap-1 text-xs text-emerald-600">
                           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -554,11 +600,15 @@ export function InboxClient({ workspaceId, profileId, profileName, initialConver
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-3">
             <div className="min-w-0">
-              <p className="truncate font-medium text-slate-900">
-                {contactLabel(selected.contacts)}
-              </p>
-              <p className="text-xs capitalize text-slate-500">
-                {selected.channel} · {selected.status}
+              <div className="flex min-w-0 items-center gap-2">
+                <p className="truncate font-medium text-slate-900">
+                  {contactLabel(selected.contacts)}
+                </p>
+                <ChannelBadge channel={selected.channel} />
+              </div>
+              <p className="truncate text-xs text-slate-500">
+                {selected.subject ? `${selected.subject} · ` : ''}
+                <span className="capitalize">{selected.status}</span>
               </p>
             </div>
             <button
@@ -619,24 +669,50 @@ export function InboxClient({ workspaceId, profileId, profileName, initialConver
           </div>
 
           <form onSubmit={handleSend} className="border-t border-slate-200 bg-white px-4 py-3">
-            <div className="mx-auto flex max-w-2xl gap-2">
-              <input
-                name="message"
-                type="text"
-                placeholder="Reply…"
-                maxLength={2000}
-                autoComplete="off"
-                onChange={signalTyping}
-                onBlur={stopTyping}
-                className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
-              />
-              <button
-                type="submit"
-                disabled={pending || connStatus === 'disconnected'}
-                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-              >
-                Send
-              </button>
+            <div className="mx-auto max-w-2xl">
+              {sendError && (
+                <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {sendError}
+                </p>
+              )}
+              <div className="flex gap-2">
+                {isEmail ? (
+                  // A textarea rather than a single line: an email reply is a
+                  // paragraph, and there is no realtime typing signal to send.
+                  <textarea
+                    name="message"
+                    rows={3}
+                    placeholder={`Reply by email to ${selected.contacts?.email ?? 'this contact'}…`}
+                    maxLength={2000}
+                    className="flex-1 resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                  />
+                ) : (
+                  <input
+                    name="message"
+                    type="text"
+                    placeholder="Reply…"
+                    maxLength={2000}
+                    autoComplete="off"
+                    onChange={signalTyping}
+                    onBlur={stopTyping}
+                    className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                  />
+                )}
+                <button
+                  type="submit"
+                  // Email delivery does not depend on the Realtime socket, so a
+                  // dropped socket must not block an email reply.
+                  disabled={pending || (!isEmail && connStatus === 'disconnected')}
+                  className="h-fit shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {pending && isEmail ? 'Sending…' : isEmail ? 'Send email' : 'Send'}
+                </button>
+              </div>
+              {isEmail && (
+                <p className="mt-1.5 text-xs text-slate-400">
+                  Sent as a real email. Replies come back into this thread.
+                </p>
+              )}
             </div>
           </form>
         </div>

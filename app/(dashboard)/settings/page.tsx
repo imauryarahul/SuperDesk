@@ -1,6 +1,7 @@
 import { Alert, RoleBadge } from '@/components/ui'
 import { requireWorkspace } from '@/lib/auth'
 import { appUrl } from '@/lib/env'
+import { inboundAddressFor } from '@/lib/postmark'
 import { createClient } from '@/lib/supabase/server'
 
 import { revokeInviteAction } from './actions'
@@ -25,6 +26,10 @@ export default async function SettingsPage() {
             <dt className="text-slate-500">Name</dt>
             <dd className="mt-0.5 font-medium text-slate-900">{workspace.name}</dd>
           </dl>
+        </Card>
+
+        <Card title="Email address">
+          <InboundAddress />
         </Card>
 
         <Card title="Team">
@@ -53,6 +58,42 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
       <h2 className="mb-4 text-sm font-semibold text-slate-900">{title}</h2>
       {children}
     </section>
+  )
+}
+
+/**
+ * The workspace's inbound address. Anything sent here becomes an email
+ * conversation in the inbox, and it is the Reply-To on every outbound reply.
+ */
+async function InboundAddress() {
+  const { data, error } = await createClient()
+    .from('workspaces')
+    .select('inbound_token')
+    .maybeSingle()
+
+  if (error || !data) {
+    return <Alert tone="error">Could not load your inbound address.</Alert>
+  }
+
+  let address: string
+  try {
+    address = inboundAddressFor(data.inbound_token)
+  } catch {
+    return (
+      <Alert tone="error">
+        Email is not configured on this deployment. Set POSTMARK_INBOUND_ADDRESS.
+      </Alert>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <CopyLink url={address} />
+      <p className="text-xs text-slate-500">
+        Email this address, or forward your support inbox to it, and the thread appears in your
+        inbox. Replies you send from the inbox come from this address too.
+      </p>
+    </div>
   )
 }
 

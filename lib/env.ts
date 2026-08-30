@@ -26,6 +26,62 @@ export function serviceRoleKey(): string {
   return key
 }
 
+function required(name: string, hint: string): string {
+  const value = process.env[name]
+  if (!value) throw new Error(`Missing ${name}. ${hint}`)
+  return value
+}
+
+export function postmarkServerToken(): string {
+  return required(
+    'POSTMARK_SERVER_TOKEN',
+    'Find it under Servers > your server > API Tokens in Postmark.',
+  )
+}
+
+/** Verified sender signature or a From address on a verified domain. */
+export function postmarkFromEmail(): string {
+  return required(
+    'POSTMARK_FROM_EMAIL',
+    'Must be a verified Sender Signature or an address on a verified domain in Postmark.',
+  )
+}
+
+/**
+ * The account-wide inbound address, e.g. abc123def@inbound.postmarkapp.com.
+ * Per-workspace addresses are this with the workspace's inbound_token spliced
+ * in as a plus-suffix — see inboundAddressFor() in lib/postmark.ts.
+ */
+export function postmarkInboundAddress(): string {
+  const value = required(
+    'POSTMARK_INBOUND_ADDRESS',
+    'Copy the inbound address from Servers > your server > Inbound in Postmark.',
+  )
+  if (!value.includes('@')) {
+    throw new Error(`POSTMARK_INBOUND_ADDRESS must be an email address, got "${value}".`)
+  }
+  return value
+}
+
+export type BasicCredentials = { user: string; pass: string }
+
+/**
+ * Credentials Postmark embeds in the inbound webhook URL as
+ * https://user:pass@host/api/webhooks/postmark-inbound.
+ */
+export function postmarkInboundWebhookCredentials(): BasicCredentials {
+  return {
+    user: required(
+      'POSTMARK_INBOUND_WEBHOOK_USER',
+      'Choose any value and put it in the inbound webhook URL in Postmark.',
+    ),
+    pass: required(
+      'POSTMARK_INBOUND_WEBHOOK_PASS',
+      'Choose a long random value and put it in the inbound webhook URL in Postmark.',
+    ),
+  }
+}
+
 export function appUrl(): string {
   const configured = process.env.NEXT_PUBLIC_APP_URL
   if (configured) return configured.replace(/\/$/, '')
