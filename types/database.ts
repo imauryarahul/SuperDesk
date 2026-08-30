@@ -122,6 +122,8 @@ export type Database = {
           created_at: string
           id: string
           published: boolean
+          search_vector: unknown
+          slug: string
           title: string
           updated_at: string
           workspace_id: string
@@ -132,6 +134,8 @@ export type Database = {
           created_at?: string
           id?: string
           published?: boolean
+          search_vector?: unknown
+          slug?: string
           title: string
           updated_at?: string
           workspace_id: string
@@ -142,6 +146,8 @@ export type Database = {
           created_at?: string
           id?: string
           published?: boolean
+          search_vector?: unknown
+          slug?: string
           title?: string
           updated_at?: string
           workspace_id?: string
@@ -349,6 +355,7 @@ export type Database = {
           id: string
           inbound_token: string
           name: string
+          slug: string
           updated_at: string
         }
         Insert: {
@@ -358,6 +365,7 @@ export type Database = {
           id?: string
           inbound_token?: string
           name: string
+          slug?: string
           updated_at?: string
         }
         Update: {
@@ -367,6 +375,7 @@ export type Database = {
           id?: string
           inbound_token?: string
           name?: string
+          slug?: string
           updated_at?: string
         }
         Relationships: []
@@ -402,6 +411,20 @@ export type Database = {
           p_max: number
         }
         Returns: boolean
+      }
+      search_kb_articles: {
+        Args: {
+          p_limit?: number
+          p_query: string
+          p_workspace_id: string
+        }
+        Returns: {
+          id: string
+          slug: string
+          title: string
+          body: string
+          category_id: string | null
+        }[]
       }
     }
     Enums: {

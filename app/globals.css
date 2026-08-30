@@ -5,3 +5,74 @@
 body {
   @apply bg-slate-50 text-slate-900 antialiased;
 }
+
+/*
+ * Shared article typography for the TipTap editor surface and the public help
+ * centre, so what an author writes is what a reader sees. Hand-rolled rather
+ * than pulling in @tailwindcss/typography: the sanitiser allowlist is nine
+ * tags long, and styling exactly those is smaller than the plugin's config.
+ */
+.prose-editor,
+.kb-article {
+  @apply text-slate-800;
+}
+
+.prose-editor > * + *,
+.kb-article > * + * {
+  @apply mt-4;
+}
+
+.prose-editor h2,
+.kb-article h2 {
+  @apply mt-8 text-lg font-semibold tracking-tight text-slate-900;
+}
+
+.prose-editor h3,
+.kb-article h3 {
+  @apply mt-6 text-base font-semibold text-slate-900;
+}
+
+.prose-editor ul,
+.kb-article ul {
+  @apply list-disc pl-6;
+}
+
+.prose-editor ol,
+.kb-article ol {
+  @apply list-decimal pl-6;
+}
+
+.prose-editor li,
+.kb-article li {
+  @apply my-1;
+}
+
+.prose-editor a,
+.kb-article a {
+  @apply font-medium text-slate-900 underline decoration-slate-300 underline-offset-2 hover:decoration-slate-900;
+}
+
+.prose-editor blockquote,
+.kb-article blockquote {
+  @apply border-l-2 border-slate-200 pl-4 italic text-slate-600;
+}
+
+.prose-editor code,
+.kb-article code {
+  @apply rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.85em];
+}
+
+.prose-editor pre,
+.kb-article pre {
+  @apply overflow-x-auto rounded-lg bg-slate-900 px-4 py-3 text-slate-100;
+}
+
+.prose-editor pre code,
+.kb-article pre code {
+  @apply bg-transparent p-0 text-inherit;
+}
+
+.prose-editor hr,
+.kb-article hr {
+  @apply border-slate-200;
+}

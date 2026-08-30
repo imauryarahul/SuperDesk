@@ -40,12 +40,26 @@ interface LocalMessage extends RemoteMessage {
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
 
+interface SuggestedArticle {
+  title: string
+  excerpt: string
+  url: string
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const TOKEN_PREFIX = 'sdesk_token_'
 const MAX_BODY_LEN = 2000
+
+/**
+ * Two characters match too much to be useful, and firing on every keystroke
+ * would put one request per character on the route. The route enforces the same
+ * minimum, so a modified client gains nothing by lowering it.
+ */
+const SUGGEST_MIN_CHARS = 3
+const SUGGEST_DEBOUNCE_MS = 300
 
 // ---------------------------------------------------------------------------
 // Derive API base URL from this script's own src.
@@ -262,6 +276,51 @@ const WIDGET_CSS = `
   30% { transform: translateY(-4px); }
 }
 
+.suggestions {
+  flex-shrink: 0;
+  border-top: 1px solid #e2e8f0;
+  padding: 8px 12px 0;
+  max-height: 190px;
+  overflow-y: auto;
+}
+.suggestions-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: #94a3b8;
+  margin-bottom: 6px;
+}
+.suggestion {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 7px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .15s, border-color .15s;
+}
+.suggestion:hover { background: #f1f5f9; border-color: #cbd5e1; }
+.suggestion-title {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 2px;
+}
+.suggestion-excerpt {
+  display: block;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .composer {
   display: flex;
   gap: 8px;
@@ -314,6 +373,7 @@ interface UIRefs {
   connBanner: HTMLDivElement
   messagesEl: HTMLDivElement
   typingRow: HTMLDivElement
+  suggestions: HTMLDivElement
   input: HTMLInputElement
   sendBtn: HTMLButtonElement
   form: HTMLFormElement
@@ -349,6 +409,7 @@ function buildUI(shadow: ShadowRoot): UIRefs {
         <span></span><span></span><span></span>
       </div>
     </div>
+    <div class="suggestions" style="display:none" role="region" aria-label="Suggested help articles"></div>
     <form class="composer">
       <input
         type="text"
@@ -374,6 +435,7 @@ function buildUI(shadow: ShadowRoot): UIRefs {
     connBanner: panel.querySelector<HTMLDivElement>('.conn-banner')!,
     messagesEl: panel.querySelector<HTMLDivElement>('.messages')!,
     typingRow: panel.querySelector<HTMLDivElement>('.typing-row')!,
+    suggestions: panel.querySelector<HTMLDivElement>('.suggestions')!,
     input: panel.querySelector<HTMLInputElement>('input')!,
     sendBtn: panel.querySelector<HTMLButtonElement>('.send-btn')!,
     form: panel.querySelector<HTMLFormElement>('.composer')!,
@@ -413,6 +475,122 @@ function mergeMsg(el: HTMLDivElement, msg: RemoteMessage): boolean {
   }
   appendMsgEl(el, { ...msg, optimistic: false })
   return true
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge base auto-suggest
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders suggestions above the composer.
+ *
+ * Clicking one opens the public help centre article in a new tab rather than in
+ * an in-widget reader. Two reasons, in order of weight: the panel is 360px wide
+ * inside a closed shadow root, so an in-widget reader would need its own scroll
+ * container, its own typography for the article HTML, and a back button — a
+ * second rendering path for content the public KB page already renders well;
+ * and a new tab leaves the half-typed message sitting in the composer, so
+ * reading the article costs the visitor nothing if it turns out not to answer
+ * their question. The trade-off is that the visitor leaves the widget's visual
+ * context, which an in-widget reader would avoid; that is the better version of
+ * this feature and the honest reason it is not here is time.
+ */
+function renderSuggestions(
+  el: HTMLDivElement,
+  articles: SuggestedArticle[],
+): void {
+  el.textContent = ''
+
+  if (articles.length === 0) {
+    el.style.display = 'none'
+    return
+  }
+
+  const label = document.createElement('div')
+  label.className = 'suggestions-label'
+  label.textContent = 'Might help'
+  el.appendChild(label)
+
+  for (const article of articles) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'suggestion'
+
+    const title = document.createElement('span')
+    title.className = 'suggestion-title'
+    // textContent, not innerHTML: article titles are workspace-authored content
+    // arriving over the network, and this is a host page's DOM.
+    title.textContent = article.title
+
+    const excerpt = document.createElement('span')
+    excerpt.className = 'suggestion-excerpt'
+    excerpt.textContent = article.excerpt
+
+    button.append(title, excerpt)
+    button.addEventListener('click', () => {
+      window.open(article.url, '_blank', 'noopener,noreferrer')
+    })
+    el.appendChild(button)
+  }
+
+  el.style.display = ''
+}
+
+/**
+ * Debounced, single-flight article lookup.
+ *
+ * Each keystroke aborts the previous request, so a slow response for "pass"
+ * can never overwrite the results for "password" — with a plain debounce and no
+ * abort, out-of-order responses show suggestions for a prefix the visitor has
+ * already moved past.
+ */
+function makeSuggester(
+  workspaceId: string,
+  el: HTMLDivElement,
+): { onInput: (value: string) => void; clear: () => void } {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let inFlight: AbortController | null = null
+
+  function clear(): void {
+    if (timer) clearTimeout(timer)
+    inFlight?.abort()
+    inFlight = null
+    renderSuggestions(el, [])
+  }
+
+  return {
+    clear,
+    onInput(value: string) {
+      const query = value.trim()
+
+      if (timer) clearTimeout(timer)
+      inFlight?.abort()
+
+      if (query.length < SUGGEST_MIN_CHARS) {
+        renderSuggestions(el, [])
+        return
+      }
+
+      timer = setTimeout(async () => {
+        const controller = new AbortController()
+        inFlight = controller
+        try {
+          const url =
+            `${API_BASE}/api/widget/kb-search` +
+            `?workspaceId=${encodeURIComponent(workspaceId)}&q=${encodeURIComponent(query)}`
+          const res = await fetch(url, { signal: controller.signal })
+          if (!res.ok) return
+          const data = (await res.json()) as { articles: SuggestedArticle[] }
+          renderSuggestions(el, data.articles.slice(0, 3))
+        } catch {
+          // Aborted or offline. Suggestions are an enhancement — failing here
+          // must never interfere with sending the message.
+        } finally {
+          if (inFlight === controller) inFlight = null
+        }
+      }, SUGGEST_DEBOUNCE_MS)
+    },
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +702,13 @@ async function boot(opts: BootOptions): Promise<void> {
     // Still show the UI; the user can try sending later
   }
 
+  // ---- Knowledge base auto-suggest ----
+  // Wired before the realtime block below, which bails out when Supabase config
+  // was not injected at build time. Suggestions are plain HTTP and should keep
+  // working in that case.
+  const suggester = makeSuggester(opts.workspaceId, ui.suggestions)
+  ui.input.addEventListener('input', () => suggester.onInput(ui.input.value))
+
   // ---- Realtime ----
   if (!SUPABASE_URL || !ANON_KEY) {
     console.warn('[SuperDesk] Supabase config not injected — realtime disabled')
@@ -607,6 +792,9 @@ async function boot(opts: BootOptions): Promise<void> {
     const clientId = crypto.randomUUID()
     ui.input.value = ''
     ui.sendBtn.disabled = true
+    // The question has been asked; suggestions for a query that is no longer on
+    // screen would just be clutter above an empty composer.
+    suggester.clear()
 
     // Optimistic update
     const optimistic: LocalMessage = {

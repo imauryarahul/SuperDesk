@@ -9,7 +9,7 @@ export type UserRole = Database['public']['Enums']['user_role']
 export type WorkspaceContext = {
   userId: string
   profile: { id: string; email: string; fullName: string | null; role: UserRole }
-  workspace: { id: string; name: string }
+  workspace: { id: string; name: string; slug: string }
 }
 
 export type AuthState =
@@ -32,7 +32,7 @@ export const getAuthState = cache(async (): Promise<AuthState> => {
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, email, full_name, role, workspaces (id, name)')
+    .select('id, email, full_name, role, workspaces (id, name, slug)')
     .eq('auth_user_id', user.id)
     .maybeSingle()
 
@@ -52,7 +52,11 @@ export const getAuthState = cache(async (): Promise<AuthState> => {
       fullName: data.full_name,
       role: data.role,
     },
-    workspace: { id: data.workspaces.id, name: data.workspaces.name },
+    workspace: {
+      id: data.workspaces.id,
+      name: data.workspaces.name,
+      slug: data.workspaces.slug,
+    },
   }
 })
 
