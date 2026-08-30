@@ -940,11 +940,11 @@ export function InboxClient({
             </div>
           </div>
 
-          <SummaryPanel conversationId={selected.id} messageCount={messages.length} />
-
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-4">
             <div className="mx-auto max-w-2xl space-y-2">
+              <SummaryPanel conversationId={selected.id} messageCount={messages.length} />
+
               {messages.map((msg) => (
                 <div
                   key={msg.id}

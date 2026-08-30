@@ -13,9 +13,9 @@ import { createAdminClient } from '@/lib/supabase/admin'
 
 const BodySchema = z.object({ conversationId: z.string().uuid() })
 
-const SUMMARY_SYSTEM = `Summarise this support thread for an agent about to reply. 3–6 short lines covering: what the customer needs, key facts (names, dates, products, errors, IDs), current status. Current state only, not a chronology. Plain text, no headings.`
+const SUMMARY_SYSTEM = `Summarise this support thread for an agent about to reply. Output 3–6 bullet points only — each line must start with "- ". Cover: what the customer needs, key facts (names, dates, products, errors, IDs), current status. Current state only, not a chronology. No headings, intro sentence, or numbered lists.`
 
-const UPDATE_SYSTEM = `Update the existing support-issue summary with the new messages. Output a complete replacement (not a delta): what the customer needs, key facts, current status. Current state only. Plain text, no headings.`
+const UPDATE_SYSTEM = `Update the existing support-issue summary with the new messages. Output a complete replacement (not a delta) as 3–6 bullet points only — each line must start with "- ". Cover: what the customer needs, key facts, current status. Current state only. No headings, intro sentence, or numbered lists.`
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

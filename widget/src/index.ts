@@ -539,56 +539,74 @@ function renderSuggestions(
 /**
  * Debounced, single-flight article lookup.
  *
- * Each keystroke aborts the previous request, so a slow response for "pass"
- * can never overwrite the results for "password" — with a plain debounce and no
- * abort, out-of-order responses show suggestions for a prefix the visitor has
- * already moved past.
+ * Each new search aborts the previous request, so a slow response for "pass"
+ * can never overwrite the results for "password". Existing suggestions stay
+ * on screen until a newer search returns — including after the visitor sends
+ * the message, which is when they are most useful.
  */
 function makeSuggester(
   workspaceId: string,
   el: HTMLDivElement,
-): { onInput: (value: string) => void; clear: () => void } {
+): { onInput: (value: string) => void; flush: (value: string) => void } {
   let timer: ReturnType<typeof setTimeout> | null = null
   let inFlight: AbortController | null = null
+  let requestedQuery = ''
 
-  function clear(): void {
-    if (timer) clearTimeout(timer)
+  function search(query: string): void {
+    if (requestedQuery === query && inFlight) return
+    requestedQuery = query
     inFlight?.abort()
-    inFlight = null
-    renderSuggestions(el, [])
+
+    const controller = new AbortController()
+    inFlight = controller
+    void (async () => {
+      try {
+        const url =
+          `${API_BASE}/api/widget/kb-search` +
+          `?workspaceId=${encodeURIComponent(workspaceId)}&q=${encodeURIComponent(query)}`
+        const res = await fetch(url, { signal: controller.signal })
+        if (!res.ok) return
+        const data = (await res.json()) as { articles: SuggestedArticle[] }
+        renderSuggestions(el, data.articles.slice(0, 3))
+      } catch {
+        // Aborted or offline. Suggestions are an enhancement — failing here
+        // must never interfere with sending the message.
+      } finally {
+        if (inFlight === controller) inFlight = null
+      }
+    })()
+  }
+
+  function schedule(query: string): void {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => search(query), SUGGEST_DEBOUNCE_MS)
   }
 
   return {
-    clear,
     onInput(value: string) {
       const query = value.trim()
 
-      if (timer) clearTimeout(timer)
-      inFlight?.abort()
-
       if (query.length < SUGGEST_MIN_CHARS) {
+        if (timer) clearTimeout(timer)
+        inFlight?.abort()
+        inFlight = null
+        requestedQuery = ''
         renderSuggestions(el, [])
         return
       }
 
-      timer = setTimeout(async () => {
-        const controller = new AbortController()
-        inFlight = controller
-        try {
-          const url =
-            `${API_BASE}/api/widget/kb-search` +
-            `?workspaceId=${encodeURIComponent(workspaceId)}&q=${encodeURIComponent(query)}`
-          const res = await fetch(url, { signal: controller.signal })
-          if (!res.ok) return
-          const data = (await res.json()) as { articles: SuggestedArticle[] }
-          renderSuggestions(el, data.articles.slice(0, 3))
-        } catch {
-          // Aborted or offline. Suggestions are an enhancement — failing here
-          // must never interfere with sending the message.
-        } finally {
-          if (inFlight === controller) inFlight = null
-        }
-      }, SUGGEST_DEBOUNCE_MS)
+      schedule(query)
+    },
+    /**
+     * Fire immediately for the message just sent. Skips the debounce so a
+     * visitor who hits Enter before the timer would have run still sees
+     * articles, and does not hide suggestions already on screen.
+     */
+    flush(value: string) {
+      if (timer) clearTimeout(timer)
+      const query = value.trim()
+      if (query.length < SUGGEST_MIN_CHARS) return
+      search(query)
     },
   }
 }
@@ -792,9 +810,10 @@ async function boot(opts: BootOptions): Promise<void> {
     const clientId = crypto.randomUUID()
     ui.input.value = ''
     ui.sendBtn.disabled = true
-    // The question has been asked; suggestions for a query that is no longer on
-    // screen would just be clutter above an empty composer.
-    suggester.clear()
+    // Keep (or fetch) articles for the message just sent. Most visitors hit
+    // Enter as soon as they finish typing, so waiting on the debounce — then
+    // clearing on submit — meant the nudge almost never appeared.
+    suggester.flush(body)
 
     // Optimistic update
     const optimistic: LocalMessage = {
