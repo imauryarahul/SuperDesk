@@ -555,13 +555,17 @@ export function InboxClient({
         // The conversation_updated broadcast will handle the remote update.
         // Locally, drop it from the list if it no longer matches the filter.
         setConversations((prev) => {
+          const conv = prev.find((c) => c.id === convId)
+          // The conversation_updated broadcast may have already removed this row
+          // from the list before this optimistic update runs.
+          if (!conv) {
+            if (selectedIdRef.current === convId) {
+              setSelectedId(prev[0]?.id ?? null)
+            }
+            return prev
+          }
           const updated = prev.map((c) => (c.id === convId ? { ...c, status: next } : c))
-          const stillMatches = matchesFilter(
-            updated.find((c) => c.id === convId)!,
-            filterRef.current,
-            profileId,
-          )
-          if (!stillMatches) {
+          if (!matchesFilter({ ...conv, status: next }, filterRef.current, profileId)) {
             const remaining = updated.filter((c) => c.id !== convId)
             setSelectedId(remaining[0]?.id ?? null)
             return remaining
@@ -625,19 +629,27 @@ export function InboxClient({
             <div className="flex items-center gap-2">
               {/* "Assigned to me" quick chip */}
               <button
+                type="button"
                 onClick={() =>
                   handleFilterChange({
                     ...filter,
                     assignee: filter.assignee === 'me' ? DEFAULT_FILTER.assignee : 'me',
                   })
                 }
-                className={`rounded-full border px-2 py-0.5 text-xs font-medium transition ${
+                aria-pressed={filter.assignee === 'me'}
+                title={filter.assignee === 'me' ? 'Clear assignee filter' : 'Show assigned to me'}
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition ${
                   filter.assignee === 'me'
                     ? 'border-slate-900 bg-slate-900 text-white'
                     : 'border-slate-200 text-slate-500 hover:border-slate-400 hover:text-slate-700'
                 }`}
               >
                 Me
+                {filter.assignee === 'me' && (
+                  <svg viewBox="0 0 12 12" aria-hidden="true" className="h-2.5 w-2.5 shrink-0 fill-current">
+                    <path d="M2.2 2.2a.75.75 0 0 1 1.06 0L6 4.94l2.74-2.74a.75.75 0 1 1 1.06 1.06L7.06 6l2.74 2.74a.75.75 0 0 1-1.06 1.06L6 7.06l-2.74 2.74a.75.75 0 0 1-1.06-1.06L4.94 6 2.2 3.26a.75.75 0 0 1 0-1.06Z" />
+                  </svg>
+                )}
               </button>
               {/* Live indicator */}
               <span
