@@ -60,6 +60,12 @@ export const getAuthState = cache(async (): Promise<AuthState> => {
   }
 })
 
+/** For Route Handlers, where a missing session is a 401 rather than a thrown error. */
+export async function getWorkspaceOrNull(): Promise<WorkspaceContext | null> {
+  const state = await getAuthState()
+  return state.status === 'ready' ? state : null
+}
+
 /** For server actions, where an unauthenticated caller is an error, not a redirect. */
 export async function requireWorkspace(): Promise<WorkspaceContext> {
   const state = await getAuthState()

@@ -14,6 +14,7 @@ import {
   DEFAULT_FILTER,
   filterToParams,
 } from './queries'
+import { SummaryPanel } from './summary-panel'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -174,6 +175,10 @@ export function InboxClient({
   const [onlineVisitors, setOnlineVisitors] = useState<Set<string>>(new Set())
   const [unread, setUnread] = useState<Set<string>>(new Set())
   const [sendError, setSendError] = useState<string | null>(null)
+  const [composerText, setComposerText] = useState('')
+  const [draftActive, setDraftActive] = useState(false)
+  const [draftLoading, setDraftLoading] = useState(false)
+  const [draftError, setDraftError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -238,6 +243,10 @@ export function InboxClient({
   // ---- Load the selected thread ----
   useEffect(() => {
     setSendError(null)
+    setComposerText('')
+    setDraftActive(false)
+    setDraftLoading(false)
+    setDraftError(null)
     if (!selectedId) {
       setMessages([])
       latestCreatedAtRef.current = ''
@@ -499,14 +508,13 @@ export function InboxClient({
       e.preventDefault()
       const convId = selectedId
       if (!convId) return
-      const input = e.currentTarget.elements.namedItem('message') as
-        | HTMLInputElement
-        | HTMLTextAreaElement
-      const body = input.value.trim()
+      const body = composerText.trim()
       if (!body) return
 
       const clientId = crypto.randomUUID()
-      input.value = ''
+      setComposerText('')
+      setDraftActive(false)
+      setDraftError(null)
       setSendError(null)
       stopTyping()
 
@@ -543,8 +551,45 @@ export function InboxClient({
         }
       })
     },
-    [selectedId, profileId, mergeMessage, stopTyping],
+    [selectedId, profileId, composerText, mergeMessage, stopTyping],
   )
+
+  const handleDraftReply = useCallback(async () => {
+    const convId = selectedId
+    if (!convId || draftLoading) return
+    setDraftLoading(true)
+    setDraftError(null)
+    try {
+      const res = await fetch('/api/inbox/draft-reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId: convId }),
+      })
+      const data: unknown = await res.json().catch(() => null)
+      if (
+        !res.ok ||
+        typeof data !== 'object' ||
+        data === null ||
+        !('draft' in data) ||
+        typeof (data as { draft: unknown }).draft !== 'string'
+      ) {
+        setDraftError("Couldn't draft a reply")
+        return
+      }
+      setComposerText((data as { draft: string }).draft.slice(0, 2000))
+      setDraftActive(true)
+    } catch {
+      setDraftError("Couldn't draft a reply")
+    } finally {
+      setDraftLoading(false)
+    }
+  }, [selectedId, draftLoading])
+
+  const discardDraft = useCallback(() => {
+    setComposerText('')
+    setDraftActive(false)
+    setDraftError(null)
+  }, [])
 
   const changeStatus = useCallback(
     (next: 'open' | 'snoozed' | 'resolved') => {
@@ -784,7 +829,9 @@ export function InboxClient({
                     <div className="mt-1 flex items-center justify-between gap-1">
                       <div className="flex min-w-0 items-center gap-1.5">
                         <ChannelBadge channel={conv.channel} />
-                        {conv.status !== 'open' && <StatusPill status={conv.status} />}
+                        {filter.status === 'all' && conv.status !== 'open' && (
+                          <StatusPill status={conv.status} />
+                        )}
                         {visitorOnline && (
                           <span className="flex items-center gap-1 text-xs text-emerald-600">
                             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -893,6 +940,8 @@ export function InboxClient({
             </div>
           </div>
 
+          <SummaryPanel conversationId={selected.id} messageCount={messages.length} />
+
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-4">
             <div className="mx-auto max-w-2xl space-y-2">
@@ -952,31 +1001,52 @@ export function InboxClient({
                   {sendError}
                 </p>
               )}
-              <div className="flex gap-2">
-                {isEmail ? (
-                  <textarea
-                    name="message"
-                    rows={3}
-                    placeholder={`Reply by email to ${selected.contacts?.email ?? 'this contact'}…`}
-                    maxLength={2000}
-                    className="flex-1 resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
-                  />
-                ) : (
-                  <input
-                    name="message"
-                    type="text"
-                    placeholder="Reply…"
-                    maxLength={2000}
-                    autoComplete="off"
-                    onChange={signalTyping}
-                    onBlur={stopTyping}
-                    className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
-                  />
-                )}
+              {(draftActive || draftError) && (
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className={`text-xs ${draftError ? 'text-red-700' : 'text-slate-400'}`}>
+                    {draftError ?? 'AI draft — edit before sending'}
+                  </p>
+                  {draftActive && (
+                    <button
+                      type="button"
+                      onClick={discardDraft}
+                      className="text-xs font-medium text-slate-600 underline-offset-2 hover:underline"
+                    >
+                      Discard draft
+                    </button>
+                  )}
+                </div>
+              )}
+              <textarea
+                name="message"
+                rows={isEmail ? 3 : 2}
+                value={composerText}
+                onChange={(e) => {
+                  setComposerText(e.target.value)
+                  if (!isEmail) signalTyping()
+                }}
+                onBlur={isEmail ? undefined : stopTyping}
+                placeholder={
+                  isEmail
+                    ? `Reply by email to ${selected.contacts?.email ?? 'this contact'}…`
+                    : 'Reply…'
+                }
+                maxLength={2000}
+                className="w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+              />
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleDraftReply()}
+                  disabled={draftLoading || pending}
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {draftLoading ? 'Drafting…' : 'Draft reply'}
+                </button>
                 <button
                   type="submit"
                   disabled={pending || (!isEmail && connStatus === 'disconnected')}
-                  className="h-fit shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
                   {pending && isEmail ? 'Sending…' : isEmail ? 'Send email' : 'Send'}
                 </button>

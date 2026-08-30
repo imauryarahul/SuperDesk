@@ -1,6 +1,6 @@
 # SuperDesk
 
-Customer communication platform. Phases 1–3 are built and verified.
+Customer communication platform. Phases 1–6 are built and verified.
 
 **Phase 1:** database schema, tenant isolation, authentication, team roles, invite flow,
 dashboard shell.
@@ -11,7 +11,17 @@ API routes with Origin-header CORS validation, and the dashboard live chat view.
 **Phase 3:** the [email channel](#email-channel) — Postmark inbound webhook, RFC 5322
 threading, and replying from the dashboard as a real email.
 
-Knowledge base, AI and custom domains are not built yet — see [Deferred](#deferred).
+**Phase 4:** unified inbox — status/channel/assignee filters, assign/reassign,
+snooze/resolve, all mutations broadcast live to every open inbox. Rate limiting
+(`rate_limit_windows`, fixed-window, fails open) added here and reused by every
+route below.
+
+**Phase 5:** knowledge base — TipTap editor, categories, public help centre, Postgres
+full-text search, and widget auto-suggest.
+
+**Phase 6:** [AI issue summarisation and auto-reply drafts](#ai-features).
+
+Custom domains are not built yet — see [Deferred](#deferred).
 
 Stack: Next.js 14 (App Router) · TypeScript (strict) · Tailwind · Supabase (Postgres,
 Auth, RLS).
@@ -32,9 +42,11 @@ npm run dev
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Project Settings → API keys | Publishable key                                                     |
 | `SUPABASE_SERVICE_ROLE_KEY`     | Project Settings → API keys | **Server only.** Signup and the invite page fail loudly without it. |
 | `NEXT_PUBLIC_APP_URL`           | —                           | Base URL for invite links. Defaults to `http://localhost:3000`.     |
+| `OPENAI_API_KEY`                | platform.openai.com/api-keys| Issue summaries and reply drafts. See [AI features](#ai-features).  |
 
 The five `POSTMARK_*` variables are only needed for the email channel; see
-[Configuring Postmark](#configuring-postmark). Chat works without them.
+[Configuring Postmark](#configuring-postmark). `OPENAI_API_KEY` is only needed for AI
+summaries and drafts. Chat works without either.
 
 
 Two Supabase dashboard settings matter for local testing:
@@ -56,6 +68,11 @@ Migrations are plain SQL under `supabase/migrations`, applied in filename order:
 20260830000200_rls_policies.sql         helper functions, privileged routines, RLS
 20260830000300_realtime_publication.sql conversations + messages on the wire
 20260830000400_email_channel.sql        workspaces.inbound_token, conversations.subject
+20260830000500_rate_limiting.sql        rate_limit_windows table, increment_rate_limit()
+20260830000600_kb_slugs_and_search.sql  kb slug triggers, search_vector generated column
+20260830000700_kb_public_read.sql       anon SELECT policies + column grants for the public KB
+20260830000800_kb_search_function.sql   search_kb_articles() full-text RPC
+20260830140007_ai_summary.sql           conversations.ai_summary + _updated_at + _message_count
 ```
 
 Regenerate types after any schema change:
@@ -318,10 +335,55 @@ their length.
 To test locally, expose port 3000 (`ngrok http 3000`) and use the forwarding host in the
 webhook URL. The IP check is skipped outside production, so this works as-is.
 
+## AI features
+
+Issue summaries and auto-reply drafts both call OpenAI's `gpt-5.4-mini` through the
+Responses API, with `reasoning: { effort: 'none' }` — summarising and drafting are
+extraction/generation tasks, not multi-step reasoning, and skipping it is faster and
+cheaper. `lib/openai.ts` sets an 8-second timeout with `maxRetries: 0`, so that is a
+hard ceiling per call, not a starting point for retries.
+
+### Issue summaries
+
+Opening a conversation fetches and renders the thread immediately — the summary is
+never on that critical path. `SummaryPanel` fetches it asynchronously below the thread
+header, showing a skeleton while loading and refreshing itself a few seconds after new
+messages arrive.
+
+`POST /api/inbox/summary` decides how much to send the model based on
+`conversations.ai_summary_message_count`, which tracks how many messages the stored
+summary already reflects:
+
+- **No summary yet:** the most recent ~40 messages or a ~10k-character budget,
+  whichever is smaller — a huge thread should summarise its current state, not its
+  entire history.
+- **Summary exists:** the existing summary plus only the messages since
+  `ai_summary_message_count`, so an active thread never re-sends what the model has
+  already distilled.
+
+A failed or timed-out call shows "Summary unavailable" with a manual retry — never an
+automatic retry loop, and never anything that blocks the conversation view itself.
+
+### Auto-reply drafts
+
+Triggered only by a "Draft reply" button in the composer; a draft is never generated or
+sent automatically. `POST /api/inbox/draft-reply` builds context the same economical
+way: the current `ai_summary` plus verbatim messages since it, or a capped recent
+window if summarisation hasn't run yet for that conversation. The customer's latest
+message is also used to run `search_kb_articles` (phase 5), adding the top 2–3 results
+so the draft can cite real documentation instead of guessing. The result lands in the
+composer as editable text — the agent can revise, discard, or send it like any other
+message.
+
+### Cost controls
+
+Both routes are rate-limited per workspace (20 summaries / 15 drafts per minute) through
+the same `rate_limit_windows` table used by every other route, since each call has a
+real dollar cost unlike most of the app.
+
 ## Deferred
 
-Not attempted yet, in build order: unified inbox with filters and assignment, knowledge
-base editor and public pages, AI summarisation, custom domains.
+Not attempted yet, in build order: custom domains, analytics dashboard.
 
 Left out of the email channel on purpose:
 
@@ -331,8 +393,8 @@ Left out of the email channel on purpose:
 - **HTML bodies.** Messages are stored and rendered as plain text, and replies are sent
   as `TextBody` only. Rendering customer HTML in the dashboard is an XSS surface that
   needs a sanitiser, and the `messages.body` column is plain text.
-- **Rate limiting**, still, on both the widget routes and this webhook. The webhook is
-  authenticated and idempotent, which blunts the risk.
+- **Rate limiting on this webhook.** The widget API routes got theirs in phase 4; the
+  inbound webhook did not. It is authenticated and idempotent, which blunts the risk.
 - **Bounce and spam-complaint webhooks.** Postmark reports them; nothing consumes them,
   so a hard bounce is invisible in the dashboard.
 - **Inbound spam filtering.** Postmark's `X-Spam-Status` header is in the payload and is
@@ -340,8 +402,9 @@ Left out of the email channel on purpose:
 
 Also deliberately left out of the foundation:
 
-- **Rate limiting.** The invite and auth actions are unthrottled beyond Supabase Auth's
-own limits. It belongs with the public widget API routes in phase 2.
+- **Rate limiting on the invite action.** Signup and signin got theirs in phase 4
+(`rate_limit_windows`, same as everywhere else); sending an invite is still unthrottled
+beyond Supabase Auth's own limits.
 - **Changing a teammate's role, and removing a member.** The RLS policies exist
 (`profiles_delete_admin`, column-level `UPDATE` grants) but there is no UI. Role is
 fixed at invite time.

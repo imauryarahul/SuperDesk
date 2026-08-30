@@ -56,6 +56,9 @@ export type Database = {
       }
       conversations: {
         Row: {
+          ai_summary: string | null
+          ai_summary_message_count: number
+          ai_summary_updated_at: string | null
           assigned_agent_id: string | null
           channel: Database["public"]["Enums"]["conversation_channel"]
           contact_id: string
@@ -68,6 +71,9 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          ai_summary?: string | null
+          ai_summary_message_count?: number
+          ai_summary_updated_at?: string | null
           assigned_agent_id?: string | null
           channel: Database["public"]["Enums"]["conversation_channel"]
           contact_id: string
@@ -80,6 +86,9 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          ai_summary?: string | null
+          ai_summary_message_count?: number
+          ai_summary_updated_at?: string | null
           assigned_agent_id?: string | null
           channel?: Database["public"]["Enums"]["conversation_channel"]
           contact_id?: string

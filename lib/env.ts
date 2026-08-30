@@ -82,6 +82,13 @@ export function postmarkInboundWebhookCredentials(): BasicCredentials {
   }
 }
 
+export function openaiApiKey(): string {
+  return required(
+    'OPENAI_API_KEY',
+    'Create a key at https://platform.openai.com/api-keys and add it to .env.local.',
+  )
+}
+
 export function appUrl(): string {
   const configured = process.env.NEXT_PUBLIC_APP_URL
   if (configured) return configured.replace(/\/$/, '')
