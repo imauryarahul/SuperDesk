@@ -1,7 +1,8 @@
 import { requireWorkspace } from '@/lib/auth'
 import { createClient } from '@/lib/supabase/server'
 
-import { CONV_SELECT, InboxClient, type ConvRow } from './inbox-client'
+import { InboxClient, type ConvRow } from './inbox-client'
+import { CONV_SELECT } from './queries'
 
 export const metadata = { title: 'Inbox · SuperDesk' }
 
@@ -14,7 +15,6 @@ export default async function InboxPage() {
 
   const { data } = await supabase
     .from('conversations')
-    // Shared with the client's own re-fetch so both stay in step.
     .select(CONV_SELECT)
     .eq('workspace_id', workspace.id)
     .eq('status', 'open')

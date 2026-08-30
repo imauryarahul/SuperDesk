@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { Database } from '@/types/database'
 
 import { sendAgentMessageAction, setConversationStatusAction } from './actions'
+import { CONV_SELECT } from './queries'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,9 +45,6 @@ interface Props {
 
 type ConnectionStatus = 'connected' | 'connecting' | 'disconnected'
 type StatusFilter = 'open' | 'resolved'
-
-export const CONV_SELECT =
-  'id, status, last_message_at, channel, subject, contacts(id, email, anonymous_token)'
 
 // ---------------------------------------------------------------------------
 // Helpers
