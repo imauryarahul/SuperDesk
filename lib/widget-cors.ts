@@ -6,7 +6,7 @@ export type CorsCheckResult =
   | { ok: true; origin: string }
   | { ok: false; response: Response }
 
-const METHODS = 'GET, POST, OPTIONS'
+const METHODS = 'GET, POST, PATCH, OPTIONS'
 const ALLOW_HEADERS = 'Content-Type'
 
 export function corsHeaders(origin: string): Record<string, string> {

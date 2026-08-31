@@ -56,11 +56,10 @@ declare
   v_candidate text;
   v_suffix int := 1;
 begin
-  -- Derived on insert and never regenerated on rename: the slug is the public
-  -- KB URL, and silently breaking every inbound link on a rename is worse than
-  -- a slug that no longer matches the display name.
-  --
-  -- Leaves room for a hyphen and a suffix inside a sane URL length.
+  if new.slug is not null then
+    return new;
+  end if;
+
   v_base := left(coalesce(private.slugify(new.name), 'workspace'), 80);
   v_candidate := v_base;
 
@@ -104,12 +103,6 @@ end;
 $$;
 
 alter table public.workspaces alter column slug set not null;
--- The DEFAULT is a placeholder the trigger above always overwrites. It exists
--- so the column can be NOT NULL without every caller — and every generated
--- Insert type — having to supply a slug it has no business choosing. Slug
--- derivation stays in exactly one place. Set after the backfill so existing
--- rows are not silently filled with it.
-alter table public.workspaces alter column slug set default 'workspace';
 alter table public.workspaces add constraint workspaces_slug_key unique (slug);
 alter table public.workspaces
   add constraint workspaces_slug_format
@@ -132,12 +125,8 @@ declare
   v_candidate text;
   v_suffix int := 1;
 begin
-  -- Derived on insert, regenerated while the article is still a draft, frozen
-  -- once it has been published: a published slug is a live URL, and retitling
-  -- should not 404 every link to it. To change a published article's URL,
-  -- unpublish it, retitle, and publish again.
-  if tg_op = 'UPDATE' and (new.title = old.title or old.published) then
-    new.slug := old.slug;
+  if new.slug is not null
+     and not (tg_op = 'UPDATE' and new.title <> old.title and not old.published) then
     return new;
   end if;
 
@@ -186,8 +175,6 @@ end;
 $$;
 
 alter table public.kb_articles alter column slug set not null;
--- Placeholder default, as on workspaces.slug above.
-alter table public.kb_articles alter column slug set default 'article';
 alter table public.kb_articles
   add constraint kb_articles_workspace_slug_key unique (workspace_id, slug);
 

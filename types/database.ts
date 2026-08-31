@@ -23,6 +23,7 @@ export type Database = {
           email: string | null
           id: string
           last_seen_at: string
+          name: string | null
           updated_at: string
           workspace_id: string
         }
@@ -32,6 +33,7 @@ export type Database = {
           email?: string | null
           id?: string
           last_seen_at?: string
+          name?: string | null
           updated_at?: string
           workspace_id: string
         }
@@ -41,6 +43,7 @@ export type Database = {
           email?: string | null
           id?: string
           last_seen_at?: string
+          name?: string | null
           updated_at?: string
           workspace_id?: string
         }

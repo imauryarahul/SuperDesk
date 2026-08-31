@@ -40,6 +40,9 @@ interface LocalMessage extends RemoteMessage {
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
 
+/** Progress through the post-message identity capture flow. */
+type CaptureStage = 'none' | 'email' | 'name' | 'done'
+
 interface SuggestedArticle {
   title: string
   excerpt: string
@@ -60,6 +63,27 @@ const MAX_BODY_LEN = 2000
  */
 const SUGGEST_MIN_CHARS = 3
 const SUGGEST_DEBOUNCE_MS = 300
+const DISMISS_PREFIX = 'sdesk_dismiss_'
+
+/**
+ * Static conversation starters shown on a brand-new conversation with no
+ * messages. Tapping one fills the composer as editable text; the visitor
+ * can extend or replace it before sending — never auto-sent.
+ *
+ * Phrasing chosen to invite completion ("I have a question about…") rather
+ * than dead-end phrases that cost a tap and produce the same empty message.
+ *
+ * Upgrade path: workspace-configurable or KB-derived starters (e.g. top
+ * kb_categories for this workspace) would be more contextually relevant.
+ * Deliberately skipped here so the widget cold-start requires no additional
+ * blocking network request. A future /api/widget/starters route could return
+ * personalised chips without changing this fill-and-focus contract.
+ */
+const CONVERSATION_STARTERS: readonly string[] = [
+  'I have a question about\u2026',
+  "I'm having trouble with\u2026",
+  'Can you help me understand\u2026',
+]
 
 // ---------------------------------------------------------------------------
 // Derive API base URL from this script's own src.
@@ -86,10 +110,15 @@ function getOrCreateToken(workspaceId: string): string {
 // API helpers (all requests go through Next.js routes, never direct-to-Supabase)
 // ---------------------------------------------------------------------------
 
-async function apiPost<T>(path: string, workspaceId: string, data: unknown): Promise<T> {
+async function apiPost<T>(
+  path: string,
+  workspaceId: string,
+  data: unknown,
+  method = 'POST',
+): Promise<T> {
   const url = `${API_BASE}${path}?workspaceId=${encodeURIComponent(workspaceId)}`
   const res = await fetch(url, {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
@@ -358,6 +387,85 @@ const WIDGET_CSS = `
 }
 .send-btn:hover { background: #334155; }
 .send-btn:disabled { background: #94a3b8; cursor: not-allowed; }
+
+.starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+.starter-chip {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: #475569;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.4;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.starter-chip:hover { background: #f1f5f9; border-color: #94a3b8; color: #1e293b; }
+
+.capture-card {
+  align-self: stretch;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 4px 0;
+}
+.capture-card p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #475569;
+  line-height: 1.4;
+}
+.capture-card .capture-row { display: flex; gap: 6px; }
+.capture-card .capture-row input {
+  flex: 1;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #1e293b;
+  background: #fff;
+  outline: none;
+  min-width: 0;
+}
+.capture-card .capture-row input:focus { border-color: #1e293b; }
+.capture-card .capture-row input::placeholder { color: #94a3b8; }
+.capture-card .capture-submit {
+  background: #1e293b;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+  transition: background .15s;
+}
+.capture-card .capture-submit:hover { background: #334155; }
+.capture-card .capture-submit:disabled { background: #94a3b8; cursor: not-allowed; }
+.capture-card .capture-dismiss {
+  margin-top: 6px;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  display: block;
+  font-family: inherit;
+}
+.capture-card .capture-dismiss:hover { color: #64748b; }
 `
 
 // ---------------------------------------------------------------------------
@@ -374,6 +482,7 @@ interface UIRefs {
   messagesEl: HTMLDivElement
   typingRow: HTMLDivElement
   suggestions: HTMLDivElement
+  startersEl: HTMLDivElement
   input: HTMLInputElement
   sendBtn: HTMLButtonElement
   form: HTMLFormElement
@@ -410,6 +519,7 @@ function buildUI(shadow: ShadowRoot): UIRefs {
       </div>
     </div>
     <div class="suggestions" style="display:none" role="region" aria-label="Suggested help articles"></div>
+    <div class="starters" style="display:none" aria-label="Conversation starters"></div>
     <form class="composer">
       <input
         type="text"
@@ -436,6 +546,7 @@ function buildUI(shadow: ShadowRoot): UIRefs {
     messagesEl: panel.querySelector<HTMLDivElement>('.messages')!,
     typingRow: panel.querySelector<HTMLDivElement>('.typing-row')!,
     suggestions: panel.querySelector<HTMLDivElement>('.suggestions')!,
+    startersEl: panel.querySelector<HTMLDivElement>('.starters')!,
     input: panel.querySelector<HTMLInputElement>('input')!,
     sendBtn: panel.querySelector<HTMLButtonElement>('.send-btn')!,
     form: panel.querySelector<HTMLFormElement>('.composer')!,
@@ -612,6 +723,103 @@ function makeSuggester(
 }
 
 // ---------------------------------------------------------------------------
+// Dismissal persistence
+// ---------------------------------------------------------------------------
+
+function isDismissed(workspaceId: string, kind: 'email' | 'name'): boolean {
+  try {
+    return localStorage.getItem(`${DISMISS_PREFIX}${kind}_${workspaceId}`) === '1'
+  } catch {
+    return false
+  }
+}
+
+function setDismissed(workspaceId: string, kind: 'email' | 'name'): void {
+  try {
+    localStorage.setItem(`${DISMISS_PREFIX}${kind}_${workspaceId}`, '1')
+  } catch { /* ignore — capture simply re-shows next visit, not an error */ }
+}
+
+// ---------------------------------------------------------------------------
+// Inline capture card (email / name) — rendered into the message thread
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a self-contained capture card DOM node.
+ * The card appends itself nowhere — callers append it where appropriate.
+ * onSubmit receives the trimmed value and is expected to throw on API error
+ * (the card restores itself on throw so the visitor can retry).
+ * onDismiss is called with the card still in the DOM; callers remove it.
+ */
+function buildCaptureCard(
+  kind: 'email' | 'name',
+  onSubmit: (value: string) => Promise<void>,
+  onDismiss: () => void,
+): HTMLDivElement {
+  const card = document.createElement('div')
+  card.className = 'capture-card'
+
+  const p = document.createElement('p')
+  p.textContent =
+    kind === 'email'
+      ? 'Leave your email and we\u2019ll follow up if we can\u2019t reach you here.'
+      : 'What should we call you? (optional)'
+  card.appendChild(p)
+
+  const row = document.createElement('div')
+  row.className = 'capture-row'
+
+  const input = document.createElement('input')
+  input.type = kind === 'email' ? 'email' : 'text'
+  input.placeholder = kind === 'email' ? 'you@example.com' : 'Your name'
+  input.autocomplete = kind === 'email' ? 'email' : 'given-name'
+  input.maxLength = kind === 'email' ? 320 : 100
+
+  const submit = document.createElement('button')
+  submit.type = 'button'
+  submit.className = 'capture-submit'
+  submit.textContent = 'Save'
+
+  row.appendChild(input)
+  row.appendChild(submit)
+  card.appendChild(row)
+
+  const dismiss = document.createElement('button')
+  dismiss.type = 'button'
+  dismiss.className = 'capture-dismiss'
+  dismiss.textContent = kind === 'email' ? 'Skip for now' : 'No thanks'
+  card.appendChild(dismiss)
+
+  submit.addEventListener('click', () => {
+    const value = input.value.trim()
+    if (!value) { input.focus(); return }
+    submit.disabled = true
+    input.disabled = true
+    dismiss.disabled = true
+    void (async () => {
+      try {
+        await onSubmit(value)
+        card.remove()
+      } catch {
+        // API failure: silently restore the card. The conversation is unaffected.
+        submit.disabled = false
+        input.disabled = false
+        dismiss.disabled = false
+        input.focus()
+      }
+    })()
+  })
+
+  input.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Enter') submit.click()
+  })
+
+  dismiss.addEventListener('click', onDismiss)
+
+  return card
+}
+
+// ---------------------------------------------------------------------------
 // Typing debounce
 // ---------------------------------------------------------------------------
 
@@ -666,6 +874,11 @@ async function boot(opts: BootOptions): Promise<void> {
   let conversationId = ''
   const anonToken = getOrCreateToken(opts.workspaceId)
   let latestCreatedAt = ''
+  // Identity capture state — see post-message email/name flow below
+  let captureStage: CaptureStage = 'none'
+  let firstMessageConsumed = false
+  let contactEmail: string | null = null
+  let contactName: string | null = null
 
   function setConnectionStatus(s: ConnectionStatus): void {
     ui.connBanner.style.display = s === 'disconnected' ? '' : 'none'
@@ -691,13 +904,20 @@ async function boot(opts: BootOptions): Promise<void> {
   try {
     // 1. Find-or-create contact
     const { contact, workspace } = await apiPost<{
-      contact: { id: string; email: string | null; anonymous_token: string | null }
+      contact: {
+        id: string
+        email: string | null
+        name: string | null
+        anonymous_token: string | null
+      }
       workspace: { name: string }
     }>('/api/widget/contact', opts.workspaceId, {
       anonymousToken: anonToken,
       ...(opts.email ? { email: opts.email } : {}),
     })
     contactId = contact.id
+    contactEmail = contact.email
+    contactName = contact.name
     ui.workspaceNameEl.textContent = workspace.name || 'Chat'
 
     // 2. Find-or-create conversation
@@ -715,9 +935,99 @@ async function boot(opts: BootOptions): Promise<void> {
       latestCreatedAt = m.created_at
     }
     renderAllMessages(ui.messagesEl, messages)
+    if (messages.length === 0) showStarters()
   } catch (err) {
     console.error('[SuperDesk] boot failed:', err)
     // Still show the UI; the user can try sending later
+  }
+
+  // ---- Conversation starters ----
+
+  function showStarters(): void {
+    ui.startersEl.innerHTML = ''
+    for (const text of CONVERSATION_STARTERS) {
+      const chip = document.createElement('button')
+      chip.type = 'button'
+      chip.className = 'starter-chip'
+      chip.textContent = text
+      chip.addEventListener('click', () => {
+        ui.input.value = text
+        ui.input.focus()
+        ui.input.setSelectionRange(text.length, text.length)
+        hideStarters()
+      })
+      ui.startersEl.appendChild(chip)
+    }
+    ui.startersEl.style.display = ''
+  }
+
+  function hideStarters(): void {
+    ui.startersEl.style.display = 'none'
+  }
+
+  // Hide starters as soon as the visitor starts free-typing
+  ui.input.addEventListener('input', () => {
+    if (ui.input.value.length > 0) hideStarters()
+  })
+
+  // ---- Post-message identity capture ----
+
+  function maybeAdvanceCapture(): void {
+    if (captureStage !== 'none') return
+    if (contactEmail) { captureStage = 'done'; return }
+    if (isDismissed(opts.workspaceId, 'email')) { captureStage = 'done'; return }
+    captureStage = 'email'
+    showEmailCapture()
+  }
+
+  function showEmailCapture(): void {
+    const card = buildCaptureCard(
+      'email',
+      async (value) => {
+        await apiPost<{ contact: { id: string } }>(
+          '/api/widget/identity',
+          opts.workspaceId,
+          { contactId, conversationId, email: value },
+          'PATCH',
+        )
+        contactEmail = value
+        captureStage = 'done'
+        showNameCapture()
+      },
+      () => {
+        setDismissed(opts.workspaceId, 'email')
+        captureStage = 'done'
+        card.remove()
+      },
+    )
+    ui.messagesEl.appendChild(card)
+    ui.messagesEl.scrollTop = ui.messagesEl.scrollHeight
+  }
+
+  function showNameCapture(): void {
+    if (contactName) return
+    if (isDismissed(opts.workspaceId, 'name')) return
+    captureStage = 'name'
+    const card = buildCaptureCard(
+      'name',
+      async (value) => {
+        await apiPost<{ contact: { id: string } }>(
+          '/api/widget/identity',
+          opts.workspaceId,
+          { contactId, conversationId, name: value },
+          'PATCH',
+        )
+        contactName = value
+        captureStage = 'done'
+      },
+      () => {
+        setDismissed(opts.workspaceId, 'name')
+        captureStage = 'done'
+        card.remove()
+      },
+    )
+    ui.messagesEl.appendChild(card)
+    ui.messagesEl.scrollTop = ui.messagesEl.scrollHeight
   }
 
   // ---- Knowledge base auto-suggest ----
@@ -847,6 +1157,13 @@ async function boot(opts: BootOptions): Promise<void> {
     } finally {
       ui.sendBtn.disabled = false
       ui.input.focus()
+      // Trigger identity capture after the first send (success or failure).
+      // The capture is an enhancement — it must never block a second send attempt.
+      if (!firstMessageConsumed) {
+        firstMessageConsumed = true
+        hideStarters()
+        maybeAdvanceCapture()
+      }
     }
   })
 }

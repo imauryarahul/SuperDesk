@@ -53,13 +53,18 @@ export async function POST(req: Request) {
     .eq('id', workspaceId)
     .single()
 
-  let contact: { id: string; email: string | null; anonymous_token: string | null } | null = null
+  let contact: {
+    id: string
+    email: string | null
+    name: string | null
+    anonymous_token: string | null
+  } | null = null
 
   // 1. Email lookup — merges anonymous sessions onto a known contact
   if (email) {
     const { data } = await admin
       .from('contacts')
-      .select('id, email, anonymous_token')
+      .select('id, email, name, anonymous_token')
       .eq('workspace_id', workspaceId)
       .ilike('email', email)
       .maybeSingle()
@@ -80,7 +85,7 @@ export async function POST(req: Request) {
   if (!contact && anonymousToken) {
     const { data } = await admin
       .from('contacts')
-      .select('id, email, anonymous_token')
+      .select('id, email, name, anonymous_token')
       .eq('workspace_id', workspaceId)
       .eq('anonymous_token', anonymousToken)
       .maybeSingle()
@@ -103,7 +108,7 @@ export async function POST(req: Request) {
         anonymous_token: anonymousToken ?? null,
         email: email ?? null,
       })
-      .select('id, email, anonymous_token')
+      .select('id, email, name, anonymous_token')
       .single()
 
     if (error) return reply({ error: 'Failed to create contact' }, 500, check.origin)

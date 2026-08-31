@@ -14,12 +14,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar
-        workspaceName={state.workspace.name}
-        displayName={state.profile.fullName ?? state.profile.email}
-        role={state.profile.role}
-      />
-      <main className="min-w-0 flex-1 overflow-auto">{children}</main>
+      <div className="relative flex h-full shrink-0">
+        <Sidebar
+          workspaceName={state.workspace.name}
+          displayName={state.profile.fullName ?? state.profile.email}
+          role={state.profile.role}
+        />
+      </div>
+      <main className="min-h-0 min-w-0 flex-1 overflow-auto">{children}</main>
     </div>
   )
 }
