@@ -879,6 +879,10 @@ async function boot(opts: BootOptions): Promise<void> {
   let firstMessageConsumed = false
   let contactEmail: string | null = null
   let contactName: string | null = null
+  // Starters stay available until the thread actually has content, so clearing
+  // the composer before sending brings them back rather than losing them.
+  let startersEligible = false
+  let startersBuilt = false
 
   function setConnectionStatus(s: ConnectionStatus): void {
     ui.connBanner.style.display = s === 'disconnected' ? '' : 'none'
@@ -935,7 +939,10 @@ async function boot(opts: BootOptions): Promise<void> {
       latestCreatedAt = m.created_at
     }
     renderAllMessages(ui.messagesEl, messages)
-    if (messages.length === 0) showStarters()
+    if (messages.length === 0) {
+      startersEligible = true
+      showStarters()
+    }
   } catch (err) {
     console.error('[SuperDesk] boot failed:', err)
     // Still show the UI; the user can try sending later
@@ -943,7 +950,7 @@ async function boot(opts: BootOptions): Promise<void> {
 
   // ---- Conversation starters ----
 
-  function showStarters(): void {
+  function buildStarters(): void {
     ui.startersEl.innerHTML = ''
     for (const text of CONVERSATION_STARTERS) {
       const chip = document.createElement('button')
@@ -958,6 +965,11 @@ async function boot(opts: BootOptions): Promise<void> {
       })
       ui.startersEl.appendChild(chip)
     }
+    startersBuilt = true
+  }
+
+  function showStarters(): void {
+    if (!startersBuilt) buildStarters()
     ui.startersEl.style.display = ''
   }
 
@@ -965,9 +977,17 @@ async function boot(opts: BootOptions): Promise<void> {
     ui.startersEl.style.display = 'none'
   }
 
-  // Hide starters as soon as the visitor starts free-typing
+  /**
+   * Starters are a shortcut, not a one-shot. They hide while the composer has
+   * content — whether typed or filled by a chip — and come back if the visitor
+   * clears it without sending, because nothing about the conversation has
+   * changed yet. `startersEligible` is what retires them for good: it goes
+   * false once the thread has real content, so they never reappear mid-thread.
+   */
   ui.input.addEventListener('input', () => {
+    if (!startersEligible) return
     if (ui.input.value.length > 0) hideStarters()
+    else showStarters()
   })
 
   // ---- Post-message identity capture ----
@@ -1056,7 +1076,13 @@ async function boot(opts: BootOptions): Promise<void> {
   msgChannel
     .on('broadcast', { event: 'new_message' }, ({ payload }: { payload: RemoteMessage }) => {
       const added = mergeMsg(ui.messagesEl, payload)
-      if (added) latestCreatedAt = payload.created_at
+      if (added) {
+        latestCreatedAt = payload.created_at
+        // An agent reached out first — the thread has content, so retire the
+        // starters even though the visitor has not sent anything yet.
+        startersEligible = false
+        hideStarters()
+      }
     })
     .on(
       'broadcast',
@@ -1161,6 +1187,7 @@ async function boot(opts: BootOptions): Promise<void> {
       // The capture is an enhancement — it must never block a second send attempt.
       if (!firstMessageConsumed) {
         firstMessageConsumed = true
+        startersEligible = false
         hideStarters()
         maybeAdvanceCapture()
       }
