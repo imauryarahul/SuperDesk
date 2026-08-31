@@ -32,6 +32,8 @@ export interface ConvRow {
   channel: ConvChannel
   subject: string | null
   assigned_agent_id: string | null
+  ai_summary: string | null
+  ai_summary_inbound_count: number
   contacts: { id: string; email: string | null; anonymous_token: string | null } | null
 }
 
@@ -191,7 +193,6 @@ export function InboxClient({
   const [draftError, setDraftError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
 
-  const messagesScrollRef = useRef<HTMLDivElement>(null)
   const latestCreatedAtRef = useRef('')
   const threadChannelRef = useRef<RealtimeChannel | null>(null)
   const selectedIdRef = useRef<string | null>(selectedId)
@@ -208,16 +209,6 @@ export function InboxClient({
   useEffect(() => {
     filterRef.current = filter
   }, [filter])
-
-  // Scrolls the message pane itself rather than calling scrollIntoView on a
-  // trailing anchor: scrollIntoView walks up and scrolls every scrollable
-  // ancestor, so when the pane is not yet the scroll container it drags <main>
-  // to the bottom and exposes empty space under the layout.
-  useEffect(() => {
-    const pane = messagesScrollRef.current
-    if (!pane) return
-    pane.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' })
-  }, [messages, visitorTyping])
 
   // ---- Update URL when filter changes (no RSC re-render) ----
   useEffect(() => {
@@ -728,6 +719,7 @@ export function InboxClient({
 
   const selected = conversations.find((c) => c.id === selectedId) ?? null
   const isEmail = selected?.channel === 'email'
+  const inboundCount = messages.filter((m) => m.sender_type === 'contact').length
 
   const assignedAgent = selected?.assigned_agent_id
     ? agents.find((a) => a.id === selected.assigned_agent_id) ?? null
@@ -740,9 +732,9 @@ export function InboxClient({
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       {/* Conversation list */}
-      <aside className="flex min-h-0 w-72 shrink-0 flex-col border-r border-slate-200 bg-white">
+      <aside className="flex min-h-0 w-72 shrink-0 flex-col overflow-hidden border-r border-slate-200 bg-white">
         {/* Header */}
-        <div className="border-b border-slate-200 px-3 py-3">
+        <div className="shrink-0 border-b border-slate-200 px-3 py-3">
           <div className="flex items-center justify-between gap-2">
             <h1 className="text-sm font-semibold text-slate-900">Inbox</h1>
             <div className="flex items-center gap-2">
@@ -849,7 +841,7 @@ export function InboxClient({
             No conversations
           </div>
         ) : (
-          <ul className="min-h-0 flex-1 overflow-y-auto">
+          <ul className="pane-scroll min-h-0 flex-1 overflow-y-auto">
             {conversations.map((conv) => {
               const isActive = conv.id === selectedId
               const visitorOnline =
@@ -947,9 +939,9 @@ export function InboxClient({
 
       {/* Thread */}
       {selected ? (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {/* Thread header */}
-          <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3">
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
                 <p className="truncate font-medium text-slate-900">
@@ -1017,9 +1009,15 @@ export function InboxClient({
           </div>
 
           {/* Messages */}
-          <div ref={messagesScrollRef} className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="pane-scroll min-h-0 flex-1 overflow-y-auto p-4">
             <div className="mx-auto max-w-2xl space-y-2">
-              <SummaryPanel conversationId={selected.id} messageCount={messages.length} />
+              <SummaryPanel
+                conversationId={selected.id}
+                cachedSummary={selected.ai_summary}
+                summarizedInboundCount={selected.ai_summary_inbound_count}
+                messageCount={messages.length}
+                inboundCount={inboundCount}
+              />
 
               {messages.map((msg) => (
                 <div
@@ -1068,7 +1066,7 @@ export function InboxClient({
           </div>
 
           {/* Composer */}
-          <form onSubmit={handleSend} className="border-t border-slate-200 bg-white px-4 py-3">
+          <form onSubmit={handleSend} className="shrink-0 border-t border-slate-200 bg-white px-4 py-3">
             <div className="mx-auto max-w-2xl">
               {sendError && (
                 <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">

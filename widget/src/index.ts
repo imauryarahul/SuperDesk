@@ -762,8 +762,8 @@ function buildCaptureCard(
   const p = document.createElement('p')
   p.textContent =
     kind === 'email'
-      ? 'Leave your email and we\u2019ll follow up if we can\u2019t reach you here.'
-      : 'What should we call you? (optional)'
+      ? 'Please drop your email so we could reach out in case we miss you here.'
+      : 'It would help to know your name, so we can address you properly. (optional)'
   card.appendChild(p)
 
   const row = document.createElement('div')

@@ -69,7 +69,7 @@ export default async function InboxPage({
   ])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex h-[100dvh] flex-col overflow-hidden">
       <InboxClient
         workspaceId={workspace.id}
         profileId={profile.id}

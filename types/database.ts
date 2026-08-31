@@ -60,6 +60,8 @@ export type Database = {
       conversations: {
         Row: {
           ai_summary: string | null
+          ai_summary_generating_at: string | null
+          ai_summary_inbound_count: number
           ai_summary_message_count: number
           ai_summary_updated_at: string | null
           assigned_agent_id: string | null
@@ -78,6 +80,8 @@ export type Database = {
         }
         Insert: {
           ai_summary?: string | null
+          ai_summary_generating_at?: string | null
+          ai_summary_inbound_count?: number
           ai_summary_message_count?: number
           ai_summary_updated_at?: string | null
           assigned_agent_id?: string | null
@@ -96,6 +100,8 @@ export type Database = {
         }
         Update: {
           ai_summary?: string | null
+          ai_summary_generating_at?: string | null
+          ai_summary_inbound_count?: number
           ai_summary_message_count?: number
           ai_summary_updated_at?: string | null
           assigned_agent_id?: string | null

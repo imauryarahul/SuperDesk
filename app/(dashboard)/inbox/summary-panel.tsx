@@ -2,14 +2,29 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 
-type Status = 'loading' | 'ready' | 'empty' | 'unavailable'
+import {
+  MIN_MESSAGES_FOR_SUMMARY,
+  isSummaryStale,
+  shouldGenerateSummary,
+} from '@/lib/ai-summary-policy'
 
-function isSummaryPayload(
-  value: unknown,
-): value is { summary: string | null; messageCount?: number } {
-  if (typeof value !== 'object' || value === null || !('summary' in value)) return false
-  const summary = (value as { summary: unknown }).summary
-  return summary === null || typeof summary === 'string'
+type Payload = {
+  summary: string | null
+  summarizedInboundCount: number
+  generating: boolean
+}
+
+function parsePayload(value: unknown): Payload | null {
+  if (typeof value !== 'object' || value === null || !('summary' in value)) return null
+  const record = value as Record<string, unknown>
+  const summary = record.summary
+  if (summary !== null && typeof summary !== 'string') return null
+  return {
+    summary,
+    summarizedInboundCount:
+      typeof record.summarizedInboundCount === 'number' ? record.summarizedInboundCount : 0,
+    generating: record.generating === true,
+  }
 }
 
 /** Normalise model output (or legacy plain-text summaries) into bullet strings. */
@@ -46,105 +61,135 @@ function AiSparkleIcon({ className, gradientId }: { className?: string; gradient
   )
 }
 
+/**
+ * Renders the cached summary that arrived with the conversation row, and calls
+ * the model only when the thread has moved on far enough to justify it — judged
+ * once per open, plus whenever the agent asks. Nothing here is on a timer: a new
+ * customer message surfaces as a Refresh button rather than a silent
+ * regeneration, and an agent's own reply changes nothing.
+ */
 export function SummaryPanel({
   conversationId,
+  cachedSummary,
+  summarizedInboundCount,
   messageCount,
+  inboundCount,
 }: {
   conversationId: string
+  cachedSummary: string | null
+  summarizedInboundCount: number
   messageCount: number
+  inboundCount: number
 }) {
   const gradientId = useId().replace(/:/g, '')
-  const [status, setStatus] = useState<Status>('loading')
-  const [summary, setSummary] = useState<string | null>(null)
-  const [refreshing, setRefreshing] = useState(false)
-  const summarizedCountRef = useRef(0)
-  const summaryRef = useRef<string | null>(null)
-  const messageCountRef = useRef(messageCount)
+  const [result, setResult] = useState<Payload | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [failed, setFailed] = useState(false)
+
   const abortRef = useRef<AbortController | null>(null)
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Conversation whose on-open decision has already been made. */
+  const decidedForRef = useRef<string | null>(null)
 
-  useEffect(() => {
-    messageCountRef.current = messageCount
-  }, [messageCount])
+  // A fetch supersedes the row we were handed, unless realtime has since
+  // delivered a summary covering at least as much of the thread.
+  const useFetched =
+    result !== null && result.summarizedInboundCount >= summarizedInboundCount
+  const summary = useFetched ? result.summary : cachedSummary
+  const coveredInbound = useFetched ? result.summarizedInboundCount : summarizedInboundCount
 
-  const load = useCallback(async (mode: 'open' | 'refresh' | 'retry') => {
-    abortRef.current?.abort()
-    const controller = new AbortController()
-    abortRef.current = controller
+  const state = {
+    hasSummary: Boolean(summary),
+    messageCount,
+    inboundCount,
+    summarizedInboundCount: coveredInbound,
+  }
+  const stale = isSummaryStale(state)
+  const tooShort = !summary && messageCount < MIN_MESSAGES_FOR_SUMMARY
 
-    if (mode === 'open') {
-      setStatus('loading')
-      setSummary(null)
-      summaryRef.current = null
-      setRefreshing(false)
-    } else if (mode === 'retry') {
-      setStatus((prev) => (prev === 'ready' ? 'ready' : 'loading'))
-      setRefreshing(true)
-    } else {
-      setRefreshing(true)
-    }
+  const generate = useCallback(
+    async (force: boolean) => {
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+      setLoading(true)
+      setFailed(false)
 
-    try {
-      const res = await fetch('/api/inbox/summary', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversationId }),
-        signal: controller.signal,
-      })
-      const data: unknown = await res.json().catch(() => null)
-      if (controller.signal.aborted) return
+      try {
+        const res = await fetch('/api/inbox/summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversationId, force }),
+          signal: controller.signal,
+        })
+        const data = parsePayload(await res.json().catch(() => null))
+        if (controller.signal.aborted) return
 
-      if (!res.ok || !isSummaryPayload(data)) {
-        if (summaryRef.current) {
-          setRefreshing(false)
+        if (!res.ok || !data) {
+          setFailed(true)
+          setLoading(false)
           return
         }
-        setStatus('unavailable')
-        setRefreshing(false)
-        return
-      }
 
-      if (data.summary === null) {
-        setSummary(null)
-        summaryRef.current = null
-        setStatus('empty')
-        summarizedCountRef.current = data.messageCount ?? 0
-      } else {
-        setSummary(data.summary)
-        summaryRef.current = data.summary
-        setStatus('ready')
-        summarizedCountRef.current = data.messageCount ?? messageCountRef.current
+        setResult(data)
+        setLoading(false)
+
+        // Another request holds the generation claim. Check back once rather
+        // than leaving the agent with a permanently empty panel.
+        if (data.generating && !data.summary) {
+          retryTimerRef.current = setTimeout(() => void generate(force), 6000)
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        setFailed(true)
+        setLoading(false)
       }
-      setRefreshing(false)
-    } catch (err) {
-      if (controller.signal.aborted) return
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      if (summaryRef.current) {
-        setRefreshing(false)
-        return
-      }
-      setStatus('unavailable')
-      setRefreshing(false)
+    },
+    [conversationId],
+  )
+
+  // Switching threads drops anything fetched for the previous one, so the
+  // outgoing summary cannot flash while the new thread's messages load.
+  useEffect(() => {
+    setResult(null)
+    setLoading(false)
+    setFailed(false)
+    return () => {
+      abortRef.current?.abort()
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
     }
   }, [conversationId])
 
+  // The only automatic trigger: the first render of this conversation that has
+  // its messages loaded. Later message arrivals deliberately do not re-run it,
+  // which is what the decidedForRef guard buys us despite the count deps.
   useEffect(() => {
-    summarizedCountRef.current = 0
-    void load('open')
-    return () => {
-      abortRef.current?.abort()
-    }
-  }, [load])
+    if (decidedForRef.current === conversationId) return
+    if (messageCount === 0) return
 
-  useEffect(() => {
-    if (status !== 'ready' && status !== 'empty') return
-    if (messageCount <= summarizedCountRef.current) return
-    const timer = setTimeout(() => {
-      void load(status === 'empty' ? 'open' : 'refresh')
-    }, 4000)
-    return () => clearTimeout(timer)
-  }, [messageCount, status, load])
+    decidedForRef.current = conversationId
+    if (
+      shouldGenerateSummary({
+        hasSummary: Boolean(cachedSummary),
+        messageCount,
+        inboundCount,
+        summarizedInboundCount,
+      })
+    ) {
+      void generate(false)
+    }
+  }, [
+    conversationId,
+    messageCount,
+    inboundCount,
+    cachedSummary,
+    summarizedInboundCount,
+    generate,
+  ])
 
   const bullets = summary ? parseBulletPoints(summary) : []
+  const showSkeleton = loading && !summary
 
   return (
     <section className="mb-3 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
@@ -154,22 +199,20 @@ export function SummaryPanel({
           <h2 className="bg-gradient-to-r from-violet-600 via-fuchsia-500 to-sky-600 bg-clip-text text-sm font-semibold text-transparent">
             Issue summary
           </h2>
-          {refreshing && status === 'ready' && (
-            <span className="text-xs text-slate-400">Updating…</span>
-          )}
+          {loading && summary && <span className="text-xs text-slate-400">Updating…</span>}
         </div>
-        {status === 'unavailable' && (
+        {(failed || (stale && !loading)) && (
           <button
             type="button"
-            onClick={() => void load('retry')}
+            onClick={() => void generate(true)}
             className="text-xs font-medium text-violet-600 underline-offset-2 hover:underline"
           >
-            Retry
+            {failed ? 'Retry' : 'Refresh'}
           </button>
         )}
       </div>
 
-      {status === 'loading' && (
+      {showSkeleton && (
         <ul className="mt-2 space-y-1" aria-live="polite" aria-label="Generating summary">
           {[0.85, 0.65, 0.75].map((width) => (
             <li key={width} className="flex items-center gap-2">
@@ -183,19 +226,19 @@ export function SummaryPanel({
         </ul>
       )}
 
-      {status === 'empty' && (
+      {!showSkeleton && tooShort && !failed && (
         <p className="mt-1.5 text-sm text-slate-400">
-          Summary will appear once there are messages.
+          Summary appears once the thread has a few messages.
         </p>
       )}
 
-      {status === 'unavailable' && (
+      {!showSkeleton && failed && !summary && (
         <p className="mt-1.5 text-sm text-slate-500" role="status">
           Summary unavailable
         </p>
       )}
 
-      {status === 'ready' && bullets.length > 0 && (
+      {bullets.length > 0 && (
         <ul className="mt-1.5 space-y-0.5">
           {bullets.map((point, i) => (
             <li key={i} className="flex gap-2 text-sm leading-snug text-slate-700">

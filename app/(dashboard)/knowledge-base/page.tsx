@@ -42,7 +42,7 @@ export default async function KnowledgeBasePage() {
   const publishedCount = (articles ?? []).filter((a) => a.published).length
 
   return (
-    <div className="px-10 py-10">
+    <div className="flex-1 overflow-y-auto px-10 py-10">
       <div className="mx-auto max-w-4xl space-y-8">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>

@@ -21,7 +21,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           role={state.profile.role}
         />
       </div>
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto">{children}</main>
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
     </div>
   )
 }

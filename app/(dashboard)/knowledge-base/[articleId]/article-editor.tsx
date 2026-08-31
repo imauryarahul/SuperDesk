@@ -87,7 +87,7 @@ export function ArticleEditor({
   )
 
   return (
-    <div className="px-10 py-10">
+    <div className="flex-1 overflow-y-auto px-10 py-10">
       <div className="mx-auto max-w-4xl space-y-5">
         <div className="flex items-center justify-between gap-4">
           <Link

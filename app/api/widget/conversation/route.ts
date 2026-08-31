@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { CONV_SELECT } from '@/app/(dashboard)/inbox/queries'
 import { checkRateLimit, getRequestIp, rateLimitedResponse } from '@/lib/rate-limit'
 import { broadcast } from '@/lib/realtime-broadcast'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -59,7 +60,7 @@ export async function POST(req: Request) {
       channel: 'chat',
       status: 'open',
     })
-    .select('id, status, last_message_at, channel, contacts(id, email, anonymous_token)')
+    .select(CONV_SELECT)
     .single()
 
   if (error) return reply({ error: 'Failed to create conversation' }, 500, check.origin)

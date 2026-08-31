@@ -6,8 +6,10 @@
  * imported by both RSC pages and client components without bundling issues.
  */
 
+// ai_summary rides along so opening a thread renders the cached summary with no
+// extra request — the panel only calls the API when it decides one is needed.
 export const CONV_SELECT =
-  'id, status, last_message_at, channel, subject, assigned_agent_id, contacts(id, email, anonymous_token)'
+  'id, status, last_message_at, channel, subject, assigned_agent_id, ai_summary, ai_summary_inbound_count, contacts(id, email, anonymous_token)'
 
 // ---------------------------------------------------------------------------
 // Filter types shared between page.tsx (server) and inbox-client.tsx (client)

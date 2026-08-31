@@ -55,7 +55,7 @@ export default async function AnalyticsPage() {
   }
 
   return (
-    <div className="min-h-full bg-slate-50">
+    <div className="flex-1 overflow-y-auto bg-slate-50">
       {/* Header */}
       <div className="border-b border-slate-200 bg-white px-8 py-6">
         <h1 className="text-xl font-semibold text-slate-900">Analytics</h1>
