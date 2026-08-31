@@ -25,9 +25,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
 }
 
 /**
- * Signup creates the auth user and the workspace atomically, so this should be
- * unreachable. It exists because the alternative — redirecting to /login while
- * a valid session exists — would bounce between middleware and this layout.
+ * Reached when a session exists but no profile does: either signup was
+ * interrupted, or an admin removed this person from the workspace. Redirecting
+ * to /login while the session is still valid would bounce against middleware.
  */
 function OrphanedAccount({ email }: { email: string }) {
   return (
@@ -35,8 +35,8 @@ function OrphanedAccount({ email }: { email: string }) {
       <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-200 bg-white p-7 shadow-sm">
         <h1 className="text-lg font-semibold">No workspace found</h1>
         <Alert tone="error">
-          {email || 'This account'} is signed in but is not attached to a workspace. Sign out and
-          create one, or ask an admin for an invite link.
+          {email || 'This account'} is signed in but is not on a team. If you were removed, ask an
+          admin to invite you again. Otherwise sign out.
         </Alert>
         <form action={signOutAction}>
           <button

@@ -96,7 +96,7 @@ to `private.current_workspace_id()`, which resolves the caller's workspace from
 bug, and `anon` has no grant on any of them.
 
 `supabase/tests/rls_isolation.sql` proves it. It seeds two workspaces (an admin and an
-agent in one, an admin in the other), runs 18 probes per member as the `authenticated`
+agent in one, an admin in the other), runs 25 probes per member as the `authenticated`
 role with a real JWT claim, and rolls the fixtures back:
 
 ```bash
@@ -104,8 +104,10 @@ psql "$DATABASE_URL" -f supabase/tests/rls_isolation.sql
 ```
 
 Each member is checked for: reading, inserting, updating and deleting across the
-workspace boundary; admin-only visibility of invite tokens; self role escalation; and
-direct RPC access to the privileged bootstrap functions. All 54 currently pass.
+workspace boundary; admin-only visibility of invite tokens; self role escalation;
+who can delete a teammate (`profiles_delete_admin`: admin, same workspace, not self);
+and direct RPC access to the privileged bootstrap functions. All 101 currently pass
+(including the anonymous help-centre probes).
 
 ## Architecture notes
 
@@ -152,8 +154,12 @@ the invited address, and join. If they are already signed in as that address, it
 single Accept button; signed in as someone else, they are told to sign out.
 
 Invites expire after 7 days, are single-use, and only an admin can read or revoke one.
-Because a profile is pinned to one workspace, inviting an address that already belongs
-to another workspace is rejected at invite time rather than at accept time.
+An admin can also remove an existing teammate from Settings → Team. That deletes their
+profile (not their login), unassigns their conversations, and they can be invited again
+with the same address. You cannot remove yourself, which is what keeps the workspace
+from being orphaned. Because a profile is pinned to one workspace, inviting an address
+that already belongs to another workspace is rejected at invite time rather than at
+accept time.
 
 Delivery is by shared link, not email — outbound email arrives with Postmark in phase 3.
 
@@ -512,9 +518,8 @@ Also deliberately left out of the foundation:
 - **Rate limiting on the invite action.** Signup and signin got theirs in phase 4
 (`rate_limit_windows`, same as everywhere else); sending an invite is still unthrottled
 beyond Supabase Auth's own limits.
-- **Changing a teammate's role, and removing a member.** The RLS policies exist
-(`profiles_delete_admin`, column-level `UPDATE` grants) but there is no UI. Role is
-fixed at invite time.
+- **Changing a teammate's role.** Role is fixed at invite time. Removal is in the
+  Settings team list (admin-only, not self); pause/deactivate is not.
 - **Renaming a workspace.** `workspaces_update_admin` allows it; Settings is read-only.
 - **One workspace per user.** `profiles.auth_user_id` is unique, so an account cannot
 belong to two workspaces. Multi-workspace membership would mean dropping that

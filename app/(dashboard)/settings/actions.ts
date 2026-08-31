@@ -9,6 +9,7 @@ import { normalizeDomain, unclaimableDomainReason } from '@/lib/custom-domain'
 import { appUrl, vercelConfig } from '@/lib/env'
 import { ActionError, toFormError, type FormState } from '@/lib/forms'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { broadcast } from '@/lib/realtime-broadcast'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import {
@@ -110,6 +111,51 @@ export async function revokeInviteAction(formData: FormData): Promise<void> {
   if (error) throw error
 
   revalidatePath('/settings')
+}
+
+/**
+ * Drops a teammate's profile. Conversations they held become unassigned
+ * (`on delete set null` on assigned_agent_id). The auth user is left in place
+ * so a later invite to the same address can attach a new profile to the same
+ * login rather than bouncing on "account already exists".
+ *
+ * Written through the caller's own client: `profiles_delete_admin` is the
+ * real gate (admin, same workspace, not self). requireAdmin is the message.
+ */
+export async function removeTeammateAction(formData: FormData): Promise<void> {
+  const { profile, workspace } = await requireAdmin()
+
+  const profileId = z.string().uuid().safeParse(formData.get('profileId'))
+  if (!profileId.success) throw new ActionError('Invalid team member.')
+
+  if (profileId.data === profile.id) {
+    throw new ActionError('You cannot remove yourself from the workspace.')
+  }
+
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('profiles')
+    .delete()
+    .eq('id', profileId.data)
+    .select('id')
+
+  if (error) throw error
+  if (!data?.length) {
+    throw new ActionError('That person is not on your team.')
+  }
+
+  // Open inboxes still hold this person in the assignee picker; the FK
+  // unassign is visible via postgres_changes, but the agents list is
+  // client state and would otherwise linger until a full reload.
+  await broadcast({
+    topic: `inbox:${workspace.id}`,
+    event: 'agent_removed',
+    payload: { profileId: profileId.data },
+  })
+
+  revalidatePath('/settings')
+  revalidatePath('/inbox')
+  revalidatePath('/analytics')
 }
 
 // SLA targets and business hours ---------------------------------------------

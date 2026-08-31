@@ -170,10 +170,11 @@ export function InboxClient({
   initialConversations,
   initialSla,
   initialFilter,
-  agents,
+  agents: initialAgents,
 }: Props) {
   const [filter, setFilter] = useState<InboxFilter>(initialFilter)
   const [conversations, setConversations] = useState<ConvRow[]>(initialConversations)
+  const [agents, setAgents] = useState<AgentProfile[]>(initialAgents)
   const [sla, setSla] = useState<Record<string, ConversationSla>>(initialSla)
   /** Bumped by anything that stops or restarts an SLA clock, to force a refetch. */
   const [slaNonce, setSlaNonce] = useState(0)
@@ -421,6 +422,29 @@ export function InboxClient({
         { event: 'conversation_updated' },
         ({ payload }: { payload: { conversation: ConvRow } }) => {
           if (payload.conversation) upsertConv(payload.conversation)
+        },
+      )
+      // A teammate was removed. Drop them from the assignee picker; the FK
+      // already nulls assigned_agent_id, which postgres_changes will also
+      // carry, but the agents list is local state and would otherwise linger.
+      .on(
+        'broadcast',
+        { event: 'agent_removed' },
+        ({ payload }: { payload: { profileId?: string } }) => {
+          const removedId = payload.profileId
+          if (!removedId) return
+          if (removedId === profileId) {
+            window.location.reload()
+            return
+          }
+          setAgents((prev) => prev.filter((a) => a.id !== removedId))
+          setConversations((prev) =>
+            prev
+              .map((c) =>
+                c.assigned_agent_id === removedId ? { ...c, assigned_agent_id: null } : c,
+              )
+              .filter((c) => matchesFilter(c, filterRef.current, profileId)),
+          )
         },
       )
       .subscribe((status) => {

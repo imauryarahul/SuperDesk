@@ -110,9 +110,13 @@ set role = 'authenticated'
 as $$
 declare
   n int;
+  v_role public.user_role;
+  v_teammates int;
 begin
   perform set_config(
     'request.jwt.claims', json_build_object('sub', p_user, 'role', 'authenticated')::text, true);
+
+  select role into v_role from public.profiles where auth_user_id = p_user;
 
   select count(*) into n from public.workspaces;
   return query select 'sees exactly 1 workspace', n = 1, n::text;
@@ -204,6 +208,39 @@ begin
     return query select 'can rename self', true, 'ok';
   exception when others then
     return query select 'can rename self', false, left(sqlerrm, 60);
+  end;
+
+  -- profiles_delete_admin: not self, same workspace, admin only. RLS on
+  -- DELETE affects 0 rows rather than raising, so these are row counts.
+  delete from public.profiles where auth_user_id = p_user;
+  get diagnostics n = row_count;
+  return query select 'cannot delete self', n = 0, n::text;
+
+  delete from public.profiles where workspace_id = p_other;
+  get diagnostics n = row_count;
+  return query select 'cannot delete other workspace profiles', n = 0, n::text;
+
+  -- Rolled back via a subtransaction so Alice deleting Carol cannot starve
+  -- Carol's later probe. An admin with no teammate (Bob) is a pass at n = 0;
+  -- the allow path is proven on A, which seeds Carol.
+  select count(*) into v_teammates
+  from public.profiles
+  where workspace_id = p_own and auth_user_id is distinct from p_user;
+
+  begin
+    delete from public.profiles
+     where workspace_id = p_own
+       and auth_user_id is distinct from p_user;
+    get diagnostics n = row_count;
+    raise exception 'rollback_delete_test';
+  exception when others then
+    if sqlerrm is distinct from 'rollback_delete_test' then
+      return query select 'delete teammate matches role', false, left(sqlerrm, 60);
+    elsif v_role = 'admin' then
+      return query select 'admin delete of teammate is allowed', n = v_teammates, n::text;
+    else
+      return query select 'agent cannot delete a teammate', n = 0, n::text;
+    end if;
   end;
 
   begin

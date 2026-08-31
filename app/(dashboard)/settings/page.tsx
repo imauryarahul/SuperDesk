@@ -9,6 +9,7 @@ import { revokeInviteAction } from './actions'
 import { CopyLink, CopySnippet } from './copy-link'
 import { CustomDomainPanel } from './custom-domain'
 import { InviteForm } from './invite-form'
+import { RemoveMemberButton } from './remove-member-button'
 import { SlaSettingsPanel } from './sla-settings'
 
 export const metadata = { title: 'Settings · SuperDesk' }
@@ -48,7 +49,7 @@ export default async function SettingsPage() {
         </Card>
 
         <Card title="Team">
-          <TeamList currentProfileId={profile.id} />
+          <TeamList currentProfileId={profile.id} canManage={isAdmin} />
         </Card>
 
         {isAdmin ? (
@@ -217,7 +218,13 @@ async function CustomDomain({ canManage }: { canManage: boolean }) {
   )
 }
 
-async function TeamList({ currentProfileId }: { currentProfileId: string }) {
+async function TeamList({
+  currentProfileId,
+  canManage,
+}: {
+  currentProfileId: string
+  canManage: boolean
+}) {
   // RLS restricts this to the caller's workspace; no workspace_id filter needed.
   const { data, error } = await createClient()
     .from('profiles')
@@ -228,22 +235,32 @@ async function TeamList({ currentProfileId }: { currentProfileId: string }) {
 
   return (
     <ul className="divide-y divide-slate-100">
-      {data.map((member) => (
-        <li key={member.id} className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-slate-900">
-              {member.full_name ?? member.email}
-              {member.id === currentProfileId ? (
-                <span className="ml-2 text-xs font-normal text-slate-400">you</span>
+      {data.map((member) => {
+        const isYou = member.id === currentProfileId
+        const displayName = member.full_name ?? member.email
+        return (
+          <li
+            key={member.id}
+            className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0"
+          >
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-slate-900">
+                {displayName}
+                {isYou ? <span className="ml-2 text-xs font-normal text-slate-400">you</span> : null}
+              </p>
+              {member.full_name ? (
+                <p className="truncate text-xs text-slate-500">{member.email}</p>
               ) : null}
-            </p>
-            {member.full_name ? (
-              <p className="truncate text-xs text-slate-500">{member.email}</p>
-            ) : null}
-          </div>
-          <RoleBadge role={member.role} />
-        </li>
-      ))}
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              <RoleBadge role={member.role} />
+              {canManage && !isYou ? (
+                <RemoveMemberButton profileId={member.id} displayName={displayName} />
+              ) : null}
+            </div>
+          </li>
+        )
+      })}
     </ul>
   )
 }
