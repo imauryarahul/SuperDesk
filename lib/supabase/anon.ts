@@ -24,5 +24,24 @@ export function createAnonClient() {
   const { url, anonKey } = publicSupabaseConfig()
   return createSupabaseClient<Database>(url, anonKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      /*
+       * Next.js defaults every server-side fetch to force-cache, and these
+       * requests carry no session, so each one is byte-identical for every
+       * visitor forever — a perfect cache key that never varies and, with no
+       * revalidate set, never expires.
+       *
+       * That is not merely stale, it is self-locking. `workspaces_public_read`
+       * only exposes a workspace to `anon` while it owns a published article,
+       * so a single request served while the knowledge base was empty caches a
+       * null workspace, and publishing an article cannot evict it: the help
+       * centre 404s permanently with correct data sitting in the database.
+       *
+       * no-store rather than a revalidate window because the cost is one
+       * PostgREST round trip on a page an admin expects to reflect what they
+       * just published, and a TTL only shortens how long that lie lasts.
+       */
+      fetch: (input, init) => fetch(input, { ...init, cache: 'no-store' }),
+    },
   })
 }

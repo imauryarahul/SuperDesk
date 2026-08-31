@@ -1,86 +1,77 @@
 # SuperDesk
 
-Customer communication platform. Phases 1–6 are built and verified.
+A customer communication platform built as a production assignment. All features are complete and running on a live Supabase project.
 
-**Phase 1:** database schema, tenant isolation, authentication, team roles, invite flow,
-dashboard shell.
+**Stack:** Next.js 14 (App Router) · TypeScript · Tailwind CSS · Supabase (Postgres, Auth, Realtime) · Postmark · OpenAI · Vercel
 
-**Phase 2:** embeddable chat widget, Supabase Realtime (messages, typing, presence),
-API routes with Origin-header CORS validation, and the dashboard live chat view.
+---
 
-**Phase 3:** the [email channel](#email-channel) — Postmark inbound webhook, RFC 5322
-threading, and replying from the dashboard as a real email.
+## What's built
 
-**Phase 4:** unified inbox — status/channel/assignee filters, assign/reassign,
-snooze/resolve, all mutations broadcast live to every open inbox. Rate limiting
-(`rate_limit_windows`, fixed-window, fails open) added here and reused by every
-route below.
 
-**Phase 5:** knowledge base — TipTap editor, categories, public help centre, Postgres
-full-text search, and widget auto-suggest.
+| Phase | Feature                                                                                                  |
+| ----- | -------------------------------------------------------------------------------------------------------- |
+| 1     | Auth, workspace creation, team roles (one Admin per workspace + Agents), invite flow                     |
+| 2     | Embeddable chat widget, real-time messaging, typing indicators, presence                                 |
+| 3     | Email channel — inbound parsing, reply from dashboard, proper thread linking                             |
+| 4     | Unified inbox — filters, assign, snooze, resolve, live updates                                           |
+| 5     | Knowledge base — rich-text editor, categories, public help centre, full-text search, widget auto-suggest |
+| 6     | AI issue summaries and auto-reply drafts                                                                 |
+| 7     | Custom domains for the help centre                                                                       |
+| 8     | Analytics dashboard — response times, resolution rate, busiest hours, per-agent stats                    |
+| 8b    | SLA tracking with business-hours awareness                                                               |
 
-**Phase 6:** [AI issue summarisation and auto-reply drafts](#ai-features).
 
-Custom domains are not built yet — see [Deferred](#deferred).
+---
 
-Stack: Next.js 14 (App Router) · TypeScript (strict) · Tailwind · Supabase (Postgres,
-Auth, RLS).
+
 
 ## Getting started
 
 ```bash
 npm install
-cp .env.local.example .env.local   # fill in the three Supabase values
-npm run widget:build               # compile public/widget.js once
+cp .env.local.example .env.local   # add your Supabase credentials
+npm run widget:build               # build the chat widget once
 npm run dev
 ```
 
 
-| Variable                        | Where to find it            | Notes                                                               |
-| ------------------------------- | --------------------------- | ------------------------------------------------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Project Settings → API      |                                                                     |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Project Settings → API keys | Publishable key                                                     |
-| `SUPABASE_SERVICE_ROLE_KEY`     | Project Settings → API keys | **Server only.** Signup and the invite page fail loudly without it. |
-| `NEXT_PUBLIC_APP_URL`           | —                           | Base URL for invite links. Defaults to `http://localhost:3000`.     |
-| `OPENAI_API_KEY`                | platform.openai.com/api-keys| Issue summaries and reply drafts. See [AI features](#ai-features).  |
-| `VERCEL_API_TOKEN`              | vercel.com/account/tokens   | Custom domains. See [Custom domains](#custom-domains).              |
-| `VERCEL_PROJECT_ID`             | Project Settings → General  | Custom domains.                                                     |
-| `VERCEL_TEAM_ID`                | Team Settings → General     | **Only if the project sits under a Vercel team.** Omit otherwise.    |
 
-The five `POSTMARK_*` variables are only needed for the email channel; see
-[Configuring Postmark](#configuring-postmark). `OPENAI_API_KEY` is only needed for AI
-summaries and drafts. The `VERCEL_*` variables are only needed for custom domains, and
-settings says so plainly rather than failing at submit time when they are absent. Chat
-works without any of them.
+### Environment variables
 
 
-Two Supabase dashboard settings matter for local testing:
+| Variable                        | Where to find it                       | Required for                                       |
+| ------------------------------- | -------------------------------------- | -------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase → Project Settings → API      | Always                                             |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase → Project Settings → API keys | Always                                             |
+| `SUPABASE_SERVICE_ROLE_KEY`     | Supabase → Project Settings → API keys | Always (server-only)                               |
+| `NEXT_PUBLIC_APP_URL`           | Your deployment URL                    | Invite links (defaults to `http://localhost:3000`) |
+| `POSTMARK_SERVER_TOKEN`         | Postmark → Server → API Tokens         | Email channel                                      |
+| `POSTMARK_FROM_EMAIL`           | Your verified sender address           | Email channel                                      |
+| `POSTMARK_INBOUND_ADDRESS`      | Postmark → Inbound stream address      | Email channel                                      |
+| `POSTMARK_INBOUND_WEBHOOK_USER` | Pick any username                      | Email channel                                      |
+| `POSTMARK_INBOUND_WEBHOOK_PASS` | Pick a strong password                 | Email channel                                      |
+| `OPENAI_API_KEY`                | platform.openai.com/api-keys           | AI summaries and drafts                            |
+| `VERCEL_API_TOKEN`              | vercel.com/account/tokens              | Custom domains                                     |
+| `VERCEL_PROJECT_ID`             | Vercel → Project Settings → General    | Custom domains                                     |
+| `VERCEL_TEAM_ID`                | Vercel → Team Settings → General       | Custom domains (team accounts only)                |
 
-- **Authentication → Sign In / Providers → Confirm email.** On by default. With it on,
-signup creates the workspace but returns no session, and the app tells the user to
-confirm first. Turn it off to click through the whole flow without a mailbox.
-- Supabase Auth rejects reserved TLDs (`.local`, `.test`), so use real-looking domains
-when creating accounts by hand.
+
+The email, AI, and Vercel variables are optional — the app works without them; those features just won't be available.
+
+### Local testing note
+
+Supabase's **Confirm email** setting is on by default. Turn it off (Authentication → Sign In → Confirm email) to skip the confirmation step while testing locally. Also avoid `.local` and `.test` TLDs when signing up — Supabase rejects them.
+
+---
 
 
 
 ## Database
 
-Migrations are plain SQL under `supabase/migrations`, applied in filename order:
+Migrations live in `supabase/migrations/` and run in filename order.
 
-```
-20260830000100_initial_schema.sql       tables, enums, indexes, updated_at triggers
-20260830000200_rls_policies.sql         helper functions, privileged routines, RLS
-20260830000300_realtime_publication.sql conversations + messages on the wire
-20260830000400_email_channel.sql        workspaces.inbound_token, conversations.subject
-20260830000500_rate_limiting.sql        rate_limit_windows table, increment_rate_limit()
-20260830000600_kb_slugs_and_search.sql  kb slug triggers, search_vector generated column
-20260830000700_kb_public_read.sql       anon SELECT policies + column grants for the public KB
-20260830000800_kb_search_function.sql   search_kb_articles() full-text RPC
-20260830140007_ai_summary.sql           conversations.ai_summary + _updated_at + _message_count
-```
-
-Regenerate types after any schema change:
+After any schema change, regenerate TypeScript types:
 
 ```bash
 supabase gen types typescript --project-id <ref> > types/database.ts
@@ -88,86 +79,58 @@ supabase gen types typescript --project-id <ref> > types/database.ts
 
 
 
-### Tenant isolation
+### How tenant isolation works
 
-Every tenant-owned table has a `workspace_id` column and an RLS policy comparing it
-to `private.current_workspace_id()`, which resolves the caller's workspace from
-`auth.uid()`. No table is reachable across workspaces even if application code has a
-bug, and `anon` has no grant on any of them.
+Every table has a `workspace_id` column. Row-level security policies ensure users can only read and write rows that belong to their own workspace — this is enforced at the database level, not just in application code. Even if there's a bug in the app, data from one workspace cannot leak to another.
 
-`supabase/tests/rls_isolation.sql` proves it. It seeds two workspaces (an admin and an
-agent in one, an admin in the other), runs 25 probes per member as the `authenticated`
-role with a real JWT claim, and rolls the fixtures back:
+You can verify this by running the isolation test suite:
 
 ```bash
 psql "$DATABASE_URL" -f supabase/tests/rls_isolation.sql
 ```
 
-Each member is checked for: reading, inserting, updating and deleting across the
-workspace boundary; admin-only visibility of invite tokens; self role escalation;
-who can delete a teammate (`profiles_delete_admin`: admin, same workspace, not self);
-and direct RPC access to the privileged bootstrap functions. All 101 currently pass
-(including the anonymous help-centre probes).
+It seeds two workspaces, runs 101 probes across workspace boundaries, and rolls everything back. All currently pass.
 
-## Architecture notes
+---
 
-**Two Supabase clients, plus one privileged escape hatch.** `lib/supabase/client.ts`
-(browser) and `lib/supabase/server.ts` (request-scoped, cookie-backed) both run as the
-signed-in user, so RLS applies to every query. `lib/supabase/admin.ts` bypasses RLS and
-is used in exactly two places: creating a workspace at signup, and reading an invite by
-token before the invitee belongs to any workspace. Both call sites authorise first.
 
-**Signup and invite acceptance are single SQL statements.** Each writes to two tables,
-so they live in `SECURITY DEFINER` functions (`create_workspace_with_admin`,
-`accept_workspace_invite`) rather than in application code, which means a partial
-failure cannot leave an orphaned workspace behind. `EXECUTE` is granted to
-`service_role` only, so neither is callable from a browser.
 
-**The RLS helpers live in a** `private` **schema.** Supabase's default privileges grant
-`EXECUTE` on every `public` function to `anon` and `authenticated`, which would publish
-`current_workspace_id()` as a REST endpoint. PostgREST only exposes `public`, so moving
-them keeps them reachable from a policy but not from the network.
+## Architecture
 
-**Composite foreign keys pin relations to one workspace.** `conversations` references
-`contacts (id, workspace_id)` rather than `contacts (id)`, and likewise for messages,
-assigned agents and KB articles. A cross-tenant id is rejected by the database itself,
-independent of RLS.
+**Two Supabase clients.** The browser client and server client both run as the signed-in user, so every query goes through row-level security. A third admin client bypasses security — it's used in exactly two places (workspace creation at signup, and reading an invite before the user has a workspace), and both places verify authorization before using it.
 
-**Middleware is UX, not security.** `middleware.ts` refreshes the session cookie and
-redirects signed-out visitors to `/login`. It uses `getUser()` rather than
-`getSession()` so the token is revalidated instead of trusted from the cookie. A
-request that gets past it still cannot read another workspace's rows.
+**Signup and invite acceptance are atomic.** Each writes to two tables, so they're implemented as database functions. If something fails halfway, you don't end up with an orphaned workspace or a half-joined user.
+
+**Middleware is for redirects, not security.** The middleware refreshes your session cookie and sends signed-out users to `/login`. It validates the token on every request rather than trusting the cookie blindly. But even if a request slips past it, the database won't serve data from the wrong workspace.
+
+---
+
+
 
 ## Invite flow
 
-An admin invites by email and role from Settings. The server generates a 32-byte token
-and inserts a row into `workspace_invites` **through the admin's own client**, so the
-admin-only RLS policy is what authorises the write. The resulting link is shown for the
-admin to share.
+Each workspace has exactly one admin: the person who created it. Everyone invited afterwards joins as an agent, so there is no role to choose on the invite form.
 
-Both cases in the requirement are handled at `/invite/[token]`:
+This is enforced in the database, not just the UI — a partial unique index allows only one `admin` profile per workspace, and a check constraint stops an admin invite being created at all. Both matter because the row-level security policy lets an admin write invite rows directly through the API, so the form alone would not be a real gate.
 
-- **No account yet** — the invitee sets a password on the invite page; the account and
-the profile are created together.
-- **Already has an account** — they switch to "I already have an account", sign in with
-the invited address, and join. If they are already signed in as that address, it is a
-single Accept button; signed in as someone else, they are told to sign out.
+Admins invite teammates by email from Settings. The invite link is generated and shown in the UI for the admin to share (email delivery is handled by Postmark once the email channel is set up).
 
-Invites expire after 7 days, are single-use, and only an admin can read or revoke one.
-An admin can also remove an existing teammate from Settings → Team. That deletes their
-profile (not their login), unassigns their conversations, and they can be invited again
-with the same address. You cannot remove yourself, which is what keeps the workspace
-from being orphaned. Because a profile is pinned to one workspace, inviting an address
-that already belongs to another workspace is rejected at invite time rather than at
-accept time.
+When someone opens an invite link:
 
-Delivery is by shared link, not email — outbound email arrives with Postmark in phase 3.
+- **New user** — they set a password on the invite page and their account is created immediately.
+- **Existing user** — they sign in with the invited address and click Accept. If they're already signed in as that address, it's a single button click.
+
+Invites expire after 7 days and can only be used once. Admins can also remove teammates from Settings → Team — this removes their profile and unassigns their conversations, but keeps their login so they can be re-invited later. You can't remove yourself, which prevents leaving a workspace with no admin.
+
+---
+
+
 
 ## Chat widget
 
 
 
-### Embedding on a site
+### Adding it to a site
 
 ```html
 <script
@@ -176,352 +139,275 @@ Delivery is by shared link, not email — outbound email arrives with Postmark i
 ></script>
 ```
 
-The script reads `data-workspace-id` and boots automatically. For sites that identify
-users, call the global before or after the tag:
+That's it — the widget loads and boots automatically. To identify a known user:
 
 ```js
-window.SuperDesk.boot({ workspaceId: 'YOUR_WORKSPACE_UUID', email: 'user@example.com' })
+window.SuperDesk.boot({
+  workspaceId: 'YOUR_WORKSPACE_UUID',
+  email: 'user@example.com',
+  name: 'Jane Smith',           // optional
+})
 ```
 
+The `name` field is optional and stored on the contact record (max 100 characters). Anonymous visitors work fine without it.
 
+### Allowed domains
 
-### Origin validation
+The widget only works from domains you've approved. Admins manage this from **Settings → Chat widget → Allowed domains** — no database access needed:
 
-Every widget API route validates the request's `Origin` header against the workspace's
-`allowed_widget_domains` array. **A request from an unlisted origin is rejected with
-HTTP 403.** Add each domain that hosts the embedded widget to that array:
+- Type a domain like `https://yoursite.com` or `http://localhost:5500` and click Add
+- Include the full scheme — `https://yoursite.com` and `http://yoursite.com` are treated as different origins
+- Remove a domain any time; it stops the widget loading there immediately
 
-- In the Supabase Table Editor: open the `workspaces` row, edit `allowed_widget_domains`.
-- Include the scheme and port exactly: `http://localhost:5500`, `https://yoursite.com`.
+Requests from unlisted origins are rejected with HTTP 403.
 
+### Testing locally
 
-
-### Local cross-origin testing
-
-The test page at `test.html` must be served from a separate port so it is a genuine
-cross-origin request (Origin-header checking is bypassed for `file://` pages and
-same-origin requests):
+Serve the test page from a different port so the widget makes a real cross-origin request:
 
 ```bash
-# In one terminal — Next.js app (default port 3000)
+# Terminal 1 — Next.js app
 npm run dev
 
-# In another terminal — static server for the test page
+# Terminal 2 — test page
 npx serve -l 5500 .
-# Then open http://localhost:5500/test.html
+# Open http://localhost:5500/test.html
 ```
 
-Add `http://localhost:5500` to `allowed_widget_domains` before opening the test page.
-Replace `PASTE_WORKSPACE_ID_HERE` in `test.html` with your workspace UUID from the
-`workspaces` table.
+Add `http://localhost:5500` to `allowed_widget_domains` and replace `PASTE_WORKSPACE_ID_HERE` in `test.html` with your workspace UUID.
 
-### Widget bundle
-
-Built separately from the Next.js app using esbuild:
+### Building the widget
 
 ```bash
-npm run widget:build   # one-off, outputs public/widget.js
-npm run widget:watch   # dev mode, rebuilds on change
+npm run widget:build   # one-off build → public/widget.js
+npm run widget:watch   # rebuild on change during development
 ```
 
-The `build` script (`next build`) also runs `widget:build` automatically.
+`next build` runs `widget:build` automatically, so production deploys always get the latest widget. The bundle is ~70 KB raw / ~21 KB gzipped. It uses Shadow DOM so the host page's CSS can't interfere with widget styles.
 
-Bundle: ~70 KB raw / ~21 KB gzipped (includes `@supabase/realtime-js` for
-WebSocket + Presence). The widget uses Shadow DOM (`mode: 'closed'`) so host page
-styles cannot reach it.
+---
+
+
 
 ## Email channel
 
-Inbound email arrives at `POST /api/webhooks/postmark-inbound` and becomes a message in
-a conversation with `channel = 'email'`. Agents reply from the same inbox view they use
-for chat, and the reply goes out through Postmark's send API as a real email.
+Inbound emails arrive as conversations in the inbox. Agents reply from the same view they use for chat, and the reply is sent as a real email through Postmark.
 
-### Routing an email to a workspace
+### How a workspace receives email
 
-Postmark delivers every inbound email for the whole account to one webhook, so the
-payload has to say which tenant it belongs to. Each workspace gets an `inbound_token`,
-and its address is the account inbound address with that token as a plus-suffix:
+Every workspace gets a unique inbound address in this format:
 
 ```
-yourhash+3f9a1c7e2b8d04f6a1@inbound.postmarkapp.com
-└─ POSTMARK_INBOUND_ADDRESS ─┘ └─ workspaces.inbound_token ─┘
+yourhash+{postmark_email_id}@inbound.postmarkapp.com
+└─── POSTMARK_INBOUND_ADDRESS ───┘ └── workspace token ──┘
 ```
 
-Postmark reports the suffix back as `MailboxHash`, which is matched against
-`workspaces.inbound_token`. The address is shown under **Settings → Email address**.
+The address is shown under **Settings → Email address**. When a customer emails it, Postmark sends the message to your webhook and includes the workspace token, so the app knows which workspace the email belongs to.
 
-The token is 9 random bytes as lowercase hex, generated by a `DEFAULT` on the column
-rather than in application code, so no insert path can create a workspace without one.
-Lowercase because a local part round-trips through arbitrary mail servers on the way
-back and case is not reliably preserved; 72 bits because the address is public-ish but
-must not be guessable to inject email into another workspace.
+### Email threading
 
-### Threading
+Replies are linked to existing conversations using standard email headers (`In-Reply-To` and `References`) — the same way mail clients like Gmail thread emails. If a customer replies from a different email address, the thread still links up correctly.
 
-`MailboxHash` identifies the **tenant**. It never identifies the **thread**, because a
-customer may reply from a different alias than the one that opened the conversation.
-Threading is done entirely on RFC 5322 headers:
+When sending replies, the app generates its own RFC-compliant `Message-ID` and stores it. This is what makes threading reliable — Postmark's internal delivery ID doesn't appear in the headers that mail clients exchange, so it can't be used for this.
 
-- **Inbound** — `In-Reply-To` and `References` are matched against
-  `messages.email_message_id` within the workspace. A hit on `In-Reply-To` (the direct
-  parent) wins; a `References`-only hit is the fallback for clients that send a chain
-  without `In-Reply-To`. A hit appends to that conversation. No hit starts a new one:
-  find-or-create a contact by sender address, then insert a conversation.
-- **Outbound** — the reply carries `In-Reply-To` set to the previous message's
-  `email_message_id` and `References` set to the known chain, so mail clients collapse
-  it into the existing thread. `Reply-To` is the workspace's inbound plus-address, which
-  is what brings the customer's next reply back to the right place.
+### Webhook security
 
-**We mint our own `Message-ID`.** Postmark's send API returns a `MessageID`, but that is
-its internal delivery id — not the `Message-ID` header the recipient's mail client sees
-and quotes back in `In-Reply-To`. Storing it would mean nothing ever matched on inbound.
-So `lib/postmark.ts` generates `<uuid@from-domain>`, sends it in the `Headers` array
-alongside `X-PM-KeepID: true` (without which Postmark replaces it), and stores that.
-Postmark's own id is logged for cross-referencing its activity feed.
+The inbound webhook is protected by two layers:
 
-`StrippedTextReply` is used as the message body, not `TextBody`, so a reply does not
-drag the whole quoted thread into the conversation. It is empty on a first email and on
-some HTML-only mail, so the fallback is `TextBody`, then a de-tagged `HtmlBody`.
+1. **HTTP Basic Auth** — credentials are embedded in the webhook URL that Postmark calls.
+2. **IP allowlist** — in production, only Postmark's known IP addresses are accepted.
 
-### Webhook authentication
 
-Two layers, both in `lib/postmark-inbound.ts`:
 
-1. **HTTP Basic Auth.** Postmark supports credentials embedded in the webhook URL, so
-   the configured URL is `https://USER:PASS@your-app.com/api/webhooks/postmark-inbound`.
-   Compared against `POSTMARK_INBOUND_WEBHOOK_USER` / `_PASS` in constant time.
-2. **Source IP allowlist.** Checked against Postmark's four published webhook IPs. Only
-   enforced when `NODE_ENV === 'production'`, because local testing goes through ngrok or
-   curl and would never present a Postmark IP. Basic Auth still applies there.
+### What happens with bad or duplicate emails
 
-Both failures return 401/403. That is deliberate — Postmark's retry policy only matters
-for deliveries we accept, and an unauthenticated caller should never be told its payload
-was stored.
+Postmark retries failed deliveries for ~10 hours. The app uses HTTP status codes to signal what Postmark should do:
 
-### Failure modes
 
-Postmark retries any non-200 up to 10 times over ~10.5 hours, so the status code is the
-contract:
+| Situation                                   | Status  | Reason                          |
+| ------------------------------------------- | ------- | ------------------------------- |
+| Bad credentials or wrong IP                 | 401/403 | Reject; retries aren't useful   |
+| Malformed payload or unknown workspace      | 200     | Retrying won't fix it           |
+| Email already received (duplicate delivery) | 200     | Already saved                   |
+| Saved successfully                          | 200     | Done                            |
+| Database error                              | 500     | Retry; the app will deduplicate |
 
-| Situation                                                              | Status | Why                                    |
-| ---------------------------------------------------------------------- | ------ | -------------------------------------- |
-| Bad credentials or non-Postmark IP                                     | 401/403| Not Postmark; retries are not our problem |
-| Malformed JSON, no `MailboxHash`, unknown workspace, unparseable sender | 200    | Retrying cannot make it routable       |
-| Duplicate delivery of a `Message-ID` already stored                     | 200    | Already durable                        |
-| Stored successfully                                                    | 200    | Done                                   |
-| Database lookup or insert failed                                        | 500    | Should be retried, and will dedupe     |
 
-**Idempotency** is enforced by the unique index on
-`messages (workspace_id, email_message_id)`. The route checks for an existing row first
-and treats a `23505` unique violation on insert as a duplicate too, so two concurrent
-deliveries of the same email cannot both create a row.
 
-**Everything after the insert is best-effort.** Bumping `last_message_at`, reopening a
-resolved thread and the Realtime broadcast run inside a `try/catch` that logs and
-swallows, because the payload is already durable at that point — a 500 there would only
-earn a redelivery that gets deduplicated and dropped. Later work such as an AI summary
-hangs off the same place and gets the same treatment.
-
-On the outbound side the ordering is reversed: the email is sent **before** the message
-row is written, because the `Message-ID` to store is only known once it has been sent,
-and a row for an email the customer never received would be a lie to the agent. A send
-failure surfaces the reason in the composer. The narrow window where the email is
-accepted but the insert then fails is logged explicitly as `sent but not persisted`.
-
-Unroutable and malformed payloads log one structured line with the Postmark `MessageID`,
-`MailboxHash`, sender, subject and original recipient — enough to find the email in
-Postmark's activity feed without reproducing it. Message bodies are never logged, only
-their length.
 
 ### Configuring Postmark
 
-1. Create a server. Copy its **Server API Token** into `POSTMARK_SERVER_TOKEN`.
-2. Verify a Sender Signature or domain, and put that address in `POSTMARK_FROM_EMAIL`.
-3. Open the server's **Inbound** stream and copy the inbound address into
-   `POSTMARK_INBOUND_ADDRESS`.
-4. Pick a user and a long random password, set `POSTMARK_INBOUND_WEBHOOK_USER` and
-   `POSTMARK_INBOUND_WEBHOOK_PASS`, and set the **Inbound Webhook** URL to
-   `https://USER:PASS@your-app.com/api/webhooks/postmark-inbound`.
+1. Create a Postmark server. Copy the **Server API Token** → `POSTMARK_SERVER_TOKEN`.
+2. Verify a sender address and put it in `POSTMARK_FROM_EMAIL`.
+3. Open the **Inbound** stream and copy the inbound address → `POSTMARK_INBOUND_ADDRESS`.
+4. Choose a username and password, set `POSTMARK_INBOUND_WEBHOOK_USER` / `_PASS`, and set the **Inbound Webhook URL** to:
+  ```
+   https://USER:PASS@your-app.com/api/webhooks/postmark-inbound
+  ```
 
-To test locally, expose port 3000 (`ngrok http 3000`) and use the forwarding host in the
-webhook URL. The IP check is skipped outside production, so this works as-is.
+To test locally, use `ngrok http 3000` to get a public URL and use that as the webhook host. The IP check is skipped outside production.
+
+---
+
+
 
 ## AI features
 
-Issue summaries and auto-reply drafts both call OpenAI's `gpt-5.4-mini` through the
-Responses API, with `reasoning: { effort: 'none' }` — summarising and drafting are
-extraction/generation tasks, not multi-step reasoning, and skipping it is faster and
-cheaper. `lib/openai.ts` sets an 8-second timeout with `maxRetries: 0`, so that is a
-hard ceiling per call, not a starting point for retries.
+The app uses `gpt-5.4-mini` for two things: summarising conversations and drafting replies. Both use the Responses API with reasoning disabled (these are straightforward tasks, not complex reasoning) and an 8-second hard timeout.
 
-### Issue summaries
+### Conversation summaries
 
-Opening a conversation fetches and renders the thread immediately — the summary is
-never on that critical path. `SummaryPanel` fetches it asynchronously below the thread
-header, showing a skeleton while loading and refreshing itself a few seconds after new
-messages arrive.
+A summary panel appears below the conversation thread. It loads asynchronously so it never slows down opening a conversation.
 
-`POST /api/inbox/summary` decides how much to send the model based on
-`conversations.ai_summary_message_count`, which tracks how many messages the stored
-summary already reflects:
+A new summary is generated when:
 
-- **No summary yet:** the most recent ~40 messages or a ~10k-character budget,
-  whichever is smaller — a huge thread should summarise its current state, not its
-  entire history.
-- **Summary exists:** the existing summary plus only the messages since
-  `ai_summary_message_count`, so an active thread never re-sends what the model has
-  already distilled.
+- There's no summary yet, **or**
+- The customer has sent 2 or more new messages since the last summary
 
-A failed or timed-out call shows "Summary unavailable" with a manual retry — never an
-automatic retry loop, and never anything that blocks the conversation view itself.
+Agent replies alone don't trigger a new summary — only customer messages do. This keeps API costs low. Once a summary is generated, newer messages show a Refresh button if you want an updated version.
+
+When two agents open the same conversation at the same time, only one summary request goes to the API — the second agent gets the result from the first.
+
+If the summary fails, "Summary unavailable" is shown with a manual retry button. It never blocks the conversation view.
+
+**What gets sent to the model:**
+
+- First summary: the most recent ~40 messages (capped at ~10,000 characters)
+- Updates: the stored summary + only the new messages since it was last generated
+
+
 
 ### Auto-reply drafts
 
-Triggered only by a "Draft reply" button in the composer; a draft is never generated or
-sent automatically. `POST /api/inbox/draft-reply` builds context the same economical
-way: the current `ai_summary` plus verbatim messages since it, or a capped recent
-window if summarisation hasn't run yet for that conversation. The customer's latest
-message is also used to run `search_kb_articles` (phase 5), adding the top 2–3 results
-so the draft can cite real documentation instead of guessing. The result lands in the
-composer as editable text — the agent can revise, discard, or send it like any other
-message.
+Click **Draft reply** in the composer to generate a suggested reply. The draft is never sent automatically — it lands in the composer as editable text.
 
-### Cost controls
+The model gets: the current summary, recent messages, and the top 2–3 knowledge base articles relevant to the customer's latest message (so drafts can reference real docs rather than guessing).
 
-Both routes are rate-limited per workspace (20 summaries / 15 drafts per minute) through
-the same `rate_limit_windows` table used by every other route, since each call has a
-real dollar cost unlike most of the app.
+### Rate limits
+
+To control costs, summaries are limited to 20 per workspace per minute and drafts to 15 per workspace per minute.
+
+---
+
+
 
 ## Custom domains
 
-A workspace can serve its help centre at its own hostname — `help.acme.com` instead of
-`/kb/acme`. Settings → Custom domain is admin-only and has three actions: connect, check
-verification, disconnect.
+Each workspace can serve its help centre at a custom hostname — e.g. `help.yoursite.com`. This is managed under Settings → Custom domain (admin only).
 
 ### Setup
 
-1. Create a Vercel token at [vercel.com/account/tokens](https://vercel.com/account/tokens)
-   with access to the project, and put it in `VERCEL_API_TOKEN`.
-2. Copy the project id from Project Settings → General into `VERCEL_PROJECT_ID`.
-3. If the project sits under a Vercel team rather than a personal account, set
-   `VERCEL_TEAM_ID` too. Every Domains API call needs it when the project is on a team and
-   must omit it when it is not, so there is no safe default — the project's dashboard URL
-   (`/team-slug/project` vs `/username/project`) tells you which case you are in.
+1. Get a Vercel API token at [vercel.com/account/tokens](https://vercel.com/account/tokens) and set `VERCEL_API_TOKEN`.
+2. Copy the Vercel project ID from Project Settings → General into `VERCEL_PROJECT_ID`.
+3. If the project is under a Vercel team (not a personal account), also set `VERCEL_TEAM_ID`.
 
-### The flow
 
-Connecting a domain calls `POST /v10/projects/{id}/domains`, stores `custom_domain`, and
-sets `custom_domain_status` to `pending`. Nothing else. The settings page then reads
-`GET /v6/domains/{domain}/config` and shows the DNS records Vercel returned for *this*
-project — an `A` record for a root domain, a `CNAME` for a subdomain, plus any `TXT`
-ownership challenge — rather than the general-purpose values in Vercel's docs, which are
-not always the right ones.
 
-"Check verification" is on demand, triggered by the admin. It calls
-`GET /v9/projects/{id}/domains/{domain}` and promotes the status to `verified` only when
-Vercel reports both that ownership is verified *and* that the configuration is not
-misconfigured. Ownership alone is not enough: a domain whose DNS does not point here has
-no certificate and does not work, so calling it verified would be a lie. Anything short of
-both stays `pending`, and a domain that has fallen off the Vercel project becomes `error`.
-`custom_domain_verified_at` is written once, on first success, and never cleared — "never
-worked" and "worked and then broke" are different facts when something goes wrong.
+### How it works
 
-There is no background polling job. DNS propagation takes minutes to hours, and a button
-an admin presses when they have finished editing their zone file is a better trigger than
-a cron sweeping every claimed domain forever.
+1. **Connect** — enter your hostname. The app registers it with Vercel and shows the DNS records you need to add (A record, CNAME, or TXT challenge, depending on your domain type).
+2. **Add DNS records** — update your DNS at your registrar.
+3. **Check verification** — click the button once DNS has propagated. The domain is marked verified only when Vercel confirms both ownership and correct DNS configuration. Ownership alone isn't enough — if the DNS doesn't point here, there's no SSL certificate and the domain won't work.
 
-### SSL
+SSL is provisioned automatically by Vercel once verification passes — nothing to configure.
 
-Nothing to build. Vercel provisions and renews the certificate itself once the domain
-verifies, which is the main reason the domain is registered with Vercel rather than just
-recorded in our database. The middleware passes `/.well-known/*` through untouched so
-nothing here can interfere with a renewal.
+### Security: the hijack guard
 
-### Routing, and the domain-hijack guard
+Anyone can type any hostname into a form. An unverified claim is never served. Until the domain is verified, every request to it gets a `404` — not a placeholder page, not the claimant's content, nothing. This prevents a user from claiming a hostname they don't control and squatting on it.
 
-`middleware.ts` resolves the `Host` header before anything else. A request on a hostname
-that belongs to the app (`localhost`, `NEXT_PUBLIC_APP_URL`, any `*.vercel.app`) is left
-alone. Anything else is looked up against `workspaces.custom_domain`, and then:
+Once verified, the custom domain serves only the public help centre. The dashboard, settings, login, and API routes all return 404 on a custom domain — a customer-controlled hostname can't become a backdoor into the app.
 
-| Host state                       | Result                                              |
-| -------------------------------- | --------------------------------------------------- |
-| No workspace claims it           | Falls through to the normal app                     |
-| Claimed, `custom_domain_status` ≠ `verified` | Bare `404`, `no-store`, on every path    |
-| Claimed and `verified`           | `/` → `/kb/{slug}`, `/{article}` → `/kb/{slug}/{article}` |
+---
 
-The middle row is the security property, not a UX detail. `custom_domain` is whatever an
-admin typed into a form, so a claim proves nothing about ownership. If an unverified claim
-served content, anyone could enter a hostname they do not control and have our edge serve
-their workspace's help centre the moment that hostname happened to resolve here. So an
-unverified claim resolves to nobody's help centre — not the claimant's, not anyone
-else's — and the refusal is `no-store` so it cannot outlive the verification that fixes it.
 
-A verified domain gets the public help centre and nothing else. `/api`, `/inbox`,
-`/settings`, `/knowledge-base`, `/login`, `/signup`, `/invite`, and paths deeper than one
-segment all 404, because a customer-controlled hostname serving our login page and our API
-under its own origin would hand that customer a same-origin foothold for free. Requests to
-`/kb/{slug}/…` on a custom domain are 307'd to the root-relative equivalent, so the
-absolute links the help centre pages emit resolve to one canonical URL per host.
 
-The decision itself lives in `lib/custom-domain.ts` as a pure function over
-`(pathname, route)`, with `scripts/custom-domain.test.mjs` (`npm run test:custom-domain`)
-asserting each row of that table. Keeping it out of the request plumbing is what makes it
-testable without a database or a running server.
+## Analytics dashboard
 
-Two implementation notes. The lookup uses the service role, not the `anon` client, because
-`custom_domain` and `custom_domain_status` are deliberately absent from `anon`'s column
-grants — which workspace owns which hostname is not public information, and widening the
-grant to serve one internal query would publish every workspace's domain over the REST
-API. And it builds its own client rather than importing `lib/supabase/admin.ts`, which
-imports `server-only`; that module only resolves to a no-op under the `react-server`
-condition, which the Edge middleware bundle is not compiled with.
+Available at `/analytics` for any signed-in workspace member.
 
-Resolutions are cached in-process for 30 seconds so a burst of traffic to one help centre
-costs one query. The cost of that window is that a just-disconnected domain can serve for
-up to 30 seconds from a warm isolate. Disconnect clears our row before detaching the
-domain at Vercel, because our row is what the router reads.
 
-## Deferred
+| Card                | What it shows                                        |
+| ------------------- | ---------------------------------------------------- |
+| SLA breaches        | Open conversations currently past their SLA deadline |
+| Avg first response  | Mean, median, and P95 response times                 |
+| Resolution rate     | Percentage of conversations resolved                 |
+| Total conversations | All-time total, split by status                      |
 
-Not attempted yet: analytics dashboard.
 
-Left out of custom domains on purpose:
+**Busiest hours** — a bar chart of message volume by hour of day (UTC), across both chat and email. Built with CSS only, no charting library.
 
-- **Background verification polling.** On-demand only, as above. A `pending` domain that
-  the admin never comes back to check stays `pending` forever even after its DNS lands.
-- **Changing a domain in place.** Connecting requires disconnecting the current one first.
-  Supporting a swap means keeping two domains attached to the Vercel project mid-flight
-  and reconciling if either half fails; refusing is one line and loses nothing.
-- **Apex-plus-`www` pairs.** One hostname per workspace. A customer wanting both would add
-  the redirect at their DNS provider.
-- **Per-workspace domain limits and abuse metering beyond rate limiting.** Connect is
-  capped at 5/min and check at 20/min per workspace, which stops scripted abuse but does
-  not stop a workspace from cycling through domains over hours.
+**Per-agent breakdown** — resolved conversations and average first-response time per team member.
 
-Left out of the email channel on purpose:
+All queries run in parallel. Every section has an explicit empty state so a fresh workspace always looks clean.
 
-- **Attachments.** Postmark base64-encodes them into the payload; storing them needs
-  Supabase Storage and a size policy. Ignored, not rejected — an email with attachments
-  still lands as a message with its text body.
-- **HTML bodies.** Messages are stored and rendered as plain text, and replies are sent
-  as `TextBody` only. Rendering customer HTML in the dashboard is an XSS surface that
-  needs a sanitiser, and the `messages.body` column is plain text.
-- **Rate limiting on this webhook.** The widget API routes got theirs in phase 4; the
-  inbound webhook did not. It is authenticated and idempotent, which blunts the risk.
-- **Bounce and spam-complaint webhooks.** Postmark reports them; nothing consumes them,
-  so a hard bounce is invisible in the dashboard.
-- **Inbound spam filtering.** Postmark's `X-Spam-Status` header is in the payload and is
-  currently ignored, so a spam email becomes a conversation.
+---
 
-Also deliberately left out of the foundation:
 
-- **Rate limiting on the invite action.** Signup and signin got theirs in phase 4
-(`rate_limit_windows`, same as everywhere else); sending an invite is still unthrottled
-beyond Supabase Auth's own limits.
-- **Changing a teammate's role.** Role is fixed at invite time. Removal is in the
-  Settings team list (admin-only, not self); pause/deactivate is not.
-- **Renaming a workspace.** `workspaces_update_admin` allows it; Settings is read-only.
-- **One workspace per user.** `profiles.auth_user_id` is unique, so an account cannot
-belong to two workspaces. Multi-workspace membership would mean dropping that
-constraint and moving `workspace_id` into a claim or a workspace switcher.
+
+## SLA tracking
+
+Each workspace has configurable SLA targets for first response and resolution, measured in business hours.
+
+### Schedule settings
+
+Configure under **Settings → SLA & Business Hours**:
+
+- First-response target (default: 30 minutes)
+- Resolution target (default: 24 hours)
+- Business hours — start and end time (default: 09:00–18:00)
+- Working days (default: Monday–Friday)
+- Timezone (default: Asia/Kolkata)
+
+These defaults apply to every workspace without any configuration. Admins can change them; agents can view them.
+
+### How SLA is calculated
+
+**First response** — time from the customer's first message to the first agent reply. If no reply yet, the clock is still running. Snoozing doesn't pause this clock — snoozing an unanswered customer doesn't buy more time to respond.
+
+**Resolution** — time from the customer's first message to when the conversation was resolved, minus time spent snoozed (only business-hours time counts in both directions).
+
+Business hours are calculated correctly across timezones and daylight saving transitions. A conversation resolved at 3am still only counts the business-hours portion of that span.
+
+### Status indicators
+
+Each conversation shows a coloured dot in the inbox list and a labelled pill in the thread header:
+
+- **Green** — on track
+- **Yellow** — approaching the deadline (within the final 20% of the target)
+- **Red** — breached
+
+Hover over the dot for the exact time remaining or elapsed. The inbox refreshes SLA status every 60 seconds since the clock moves even when there's no new message.
+
+A conversation with no customer message (e.g. agent-initiated) has no SLA clock.
+
+---
+
+
+
+## What's not built
+
+
+
+### Custom domains
+
+- No background polling — if you never click "Check verification", the domain stays pending
+- No in-place domain swapping — disconnect the old one before connecting a new one
+- One hostname per workspace (no automatic apex + www pair)
+
+
+
+### Email channel
+
+- **Attachments** — emails with attachments still arrive, but the files are ignored (only the text body is stored)
+- **HTML emails** — stored and displayed as plain text
+- **Bounce and spam-complaint handling** — Postmark reports these but the app doesn't act on them
+- **Spam filtering** — spam emails become conversations
+
+
+
+### General
+
+- **Teammate role changes** — everyone except the workspace creator is an agent, and there is no way to promote, demote, or transfer the admin role
+- **Multi-workspace accounts** — one account belongs to one workspace
+- **Invite rate limiting** — the invite action itself isn't rate-limited (Supabase Auth limits apply)
 

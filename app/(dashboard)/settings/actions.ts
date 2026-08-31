@@ -23,9 +23,15 @@ import {
 
 export type InviteFormState = FormState & { inviteUrl?: string; invitedEmail?: string }
 
+/**
+ * No role field. A workspace has exactly one admin — whoever created it — so
+ * there is nothing to choose, and reading a role from the form would only
+ * create a way to ask for one that cannot be granted. The database agrees:
+ * workspace_invites_role_agent_only rejects any other invite, and the partial
+ * unique index on profiles rejects a second admin however it is attempted.
+ */
 const inviteSchema = z.object({
   email: z.string().trim().toLowerCase().email('Enter a valid email address.'),
-  role: z.enum(['admin', 'agent'], { message: 'Pick a role.' }),
 })
 
 export async function inviteTeammateAction(
@@ -38,7 +44,7 @@ export async function inviteTeammateAction(
     if (!parsed.success) {
       throw new ActionError(parsed.error.issues[0]?.message ?? 'Check the form and try again.')
     }
-    const { email, role } = parsed.data
+    const { email } = parsed.data
 
     if (email === profile.email) {
       throw new ActionError('That is your own email address.')
@@ -56,7 +62,7 @@ export async function inviteTeammateAction(
     const { error } = await supabase.from('workspace_invites').insert({
       workspace_id: workspace.id,
       email,
-      role,
+      role: 'agent',
       token,
       invited_by: profile.id,
     })
@@ -253,6 +259,113 @@ export async function updateSlaSettingsAction(
   } catch (error) {
     return toFormError(error, 'updateSlaSettingsAction')
   }
+}
+
+// Widget allowed domains ------------------------------------------------------
+
+export type AllowedDomainsFormState = FormState & { message?: string }
+
+const MAX_ALLOWED_DOMAINS = 20
+
+/**
+ * Must come out exactly equal to what a browser sends as the Origin header —
+ * scheme, host, and port, nothing else. `new URL` is only used to validate
+ * and normalise; the stored value is `url.origin`, never the raw input, so a
+ * trailing slash or stray path typed into the form can't end up in the
+ * allowlist that checkWidgetOrigin compares against with a plain string match.
+ */
+function parseWidgetOrigin(input: string): string {
+  let url: URL
+  try {
+    url = new URL(input.trim())
+  } catch {
+    throw new ActionError(
+      'Enter a full URL including the scheme, e.g. https://yoursite.com.',
+    )
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new ActionError('Only http:// and https:// domains are allowed.')
+  }
+  if ((url.pathname !== '/' && url.pathname !== '') || url.search || url.hash) {
+    throw new ActionError(
+      'Enter just the domain, with no path — e.g. https://yoursite.com, not https://yoursite.com/page.',
+    )
+  }
+
+  return url.origin
+}
+
+export async function addAllowedDomainAction(
+  _prevState: AllowedDomainsFormState,
+  formData: FormData,
+): Promise<AllowedDomainsFormState> {
+  try {
+    const { workspace } = await requireAdmin()
+    const origin = parseWidgetOrigin(String(formData.get('domain') ?? ''))
+
+    const supabase = createClient()
+    const current = await loadAllowedDomains(supabase, workspace.id)
+
+    if (current.includes(origin)) {
+      throw new ActionError(`${origin} is already allowed.`)
+    }
+    if (current.length >= MAX_ALLOWED_DOMAINS) {
+      throw new ActionError(
+        `You can have at most ${MAX_ALLOWED_DOMAINS} allowed domains. Remove one first.`,
+      )
+    }
+
+    const { error } = await supabase
+      .from('workspaces')
+      .update({ allowed_widget_domains: [...current, origin] })
+      .eq('id', workspace.id)
+
+    if (error) throw error
+
+    revalidatePath('/settings')
+    return { error: null, message: `${origin} can now load the chat widget.` }
+  } catch (error) {
+    return toFormError(error, 'addAllowedDomainAction')
+  }
+}
+
+/**
+ * No confirmation step: removing a domain only stops the widget loading
+ * there going forward, it does not touch any data, and re-adding it is one
+ * form submit away.
+ */
+export async function removeAllowedDomainAction(formData: FormData): Promise<void> {
+  const { workspace } = await requireAdmin()
+
+  const origin = String(formData.get('domain') ?? '')
+  if (!origin) throw new ActionError('Missing domain.')
+
+  const supabase = createClient()
+  const current = await loadAllowedDomains(supabase, workspace.id)
+
+  const { error } = await supabase
+    .from('workspaces')
+    .update({ allowed_widget_domains: current.filter((d) => d !== origin) })
+    .eq('id', workspace.id)
+
+  if (error) throw error
+
+  revalidatePath('/settings')
+}
+
+async function loadAllowedDomains(
+  supabase: ReturnType<typeof createClient>,
+  workspaceId: string,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('workspaces')
+    .select('allowed_widget_domains')
+    .eq('id', workspaceId)
+    .single()
+
+  if (error) throw error
+  return data.allowed_widget_domains
 }
 
 // Custom domains -------------------------------------------------------------

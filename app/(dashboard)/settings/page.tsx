@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import { dnsRecordsFor, getDomainConfig, getProjectDomain, type DnsRecord } from '@/lib/vercel'
 
 import { revokeInviteAction } from './actions'
+import { AllowedDomainsPanel } from './allowed-domains'
 import { CopyLink, CopySnippet } from './copy-link'
 import { CustomDomainPanel } from './custom-domain'
 import { InviteForm } from './invite-form'
@@ -37,7 +38,7 @@ export default async function SettingsPage() {
         </Card>
 
         <Card title="Chat widget">
-          <WidgetEmbed workspaceId={workspace.id} />
+          <WidgetEmbed workspaceId={workspace.id} canManage={isAdmin} />
         </Card>
 
         <Card title="SLA and business hours">
@@ -113,18 +114,38 @@ async function InboundAddress() {
   )
 }
 
-function WidgetEmbed({ workspaceId }: { workspaceId: string }) {
+async function WidgetEmbed({
+  workspaceId,
+  canManage,
+}: {
+  workspaceId: string
+  canManage: boolean
+}) {
   const snippet = `<script\n  src="${appUrl()}/widget.js"\n  data-workspace-id="${workspaceId}"\n></script>`
 
+  const { data, error } = await createClient()
+    .from('workspaces')
+    .select('allowed_widget_domains')
+    .eq('id', workspaceId)
+    .single()
+
   return (
-    <div className="space-y-2">
-      <CopySnippet text={snippet} />
-      <p className="text-xs text-slate-500">
-        Paste before <code className="rounded bg-slate-100 px-1">&lt;/body&gt;</code> on any site.
-        Add that site&apos;s origin to <code className="rounded bg-slate-100 px-1">allowed_widget_domains</code>
-        on this workspace (Supabase Table Editor → workspaces) — include scheme and host exactly, e.g.
-        <code className="rounded bg-slate-100 px-1">https://klassklub.com</code>.
-      </p>
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <CopySnippet text={snippet} />
+        <p className="text-xs text-slate-500">
+          Paste before <code className="rounded bg-slate-100 px-1">&lt;/body&gt;</code> on any site.
+        </p>
+      </div>
+
+      <div>
+        <p className="mb-2 text-xs font-medium text-slate-700">Allowed domains</p>
+        {error ? (
+          <Alert tone="error">Could not load allowed domains.</Alert>
+        ) : (
+          <AllowedDomainsPanel canManage={canManage} domains={data.allowed_widget_domains} />
+        )}
+      </div>
     </div>
   )
 }
