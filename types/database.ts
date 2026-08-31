@@ -66,8 +66,10 @@ export type Database = {
           id: string
           last_message_at: string
           resolved_at: string | null
+          snoozed_at: string | null
           status: Database["public"]["Enums"]["conversation_status"]
           subject: string | null
+          total_snoozed_seconds: number
           updated_at: string
           workspace_id: string
         }
@@ -82,8 +84,10 @@ export type Database = {
           id?: string
           last_message_at?: string
           resolved_at?: string | null
+          snoozed_at?: string | null
           status?: Database["public"]["Enums"]["conversation_status"]
           subject?: string | null
+          total_snoozed_seconds?: number
           updated_at?: string
           workspace_id: string
         }
@@ -98,8 +102,10 @@ export type Database = {
           id?: string
           last_message_at?: string
           resolved_at?: string | null
+          snoozed_at?: string | null
           status?: Database["public"]["Enums"]["conversation_status"]
           subject?: string | null
+          total_snoozed_seconds?: number
           updated_at?: string
           workspace_id?: string
         }
@@ -362,37 +368,59 @@ export type Database = {
       workspaces: {
         Row: {
           allowed_widget_domains: string[]
+          /** ISO day-of-week, 1 = Monday … 7 = Sunday. */
+          business_days: number[]
+          /** Postgres `time`, serialized as 'HH:MM:SS'. */
+          business_hours_end: string
+          /** Postgres `time`, serialized as 'HH:MM:SS'. */
+          business_hours_start: string
+          /** IANA timezone name; validated by a trigger against pg_timezone_names. */
+          business_timezone: string
           created_at: string
           custom_domain: string | null
           custom_domain_status: Database["public"]["Enums"]["custom_domain_status"]
           custom_domain_verified_at: string | null
+          first_response_target_minutes: number
           id: string
           inbound_token: string
           name: string
+          resolution_target_minutes: number
           slug: string
           updated_at: string
         }
         Insert: {
           allowed_widget_domains?: string[]
+          business_days?: number[]
+          business_hours_end?: string
+          business_hours_start?: string
+          business_timezone?: string
           created_at?: string
           custom_domain?: string | null
           custom_domain_status?: Database["public"]["Enums"]["custom_domain_status"]
           custom_domain_verified_at?: string | null
+          first_response_target_minutes?: number
           id?: string
           inbound_token?: string
           name: string
+          resolution_target_minutes?: number
           slug?: string
           updated_at?: string
         }
         Update: {
           allowed_widget_domains?: string[]
+          business_days?: number[]
+          business_hours_end?: string
+          business_hours_start?: string
+          business_timezone?: string
           created_at?: string
           custom_domain?: string | null
           custom_domain_status?: Database["public"]["Enums"]["custom_domain_status"]
           custom_domain_verified_at?: string | null
+          first_response_target_minutes?: number
           id?: string
           inbound_token?: string
           name?: string
+          resolution_target_minutes?: number
           slug?: string
           updated_at?: string
         }
@@ -436,6 +464,37 @@ export type Database = {
         Returns: {
           resolved_count: number
           total_count: number
+        }[]
+      }
+      /**
+       * SLA per conversation, computed on read. Pass null for
+       * p_conversation_ids to cover every conversation the caller can see.
+       * The two state columns are `text` in Postgres; narrow them with
+       * `isSlaState` in lib/sla.ts rather than casting.
+       */
+      get_conversations_sla: {
+        Args: {
+          p_conversation_ids: string[] | null
+          p_unresolved_only: boolean
+        }
+        Returns: {
+          conversation_id: string
+          first_response_state: string | null
+          first_response_seconds: number | null
+          first_response_target_seconds: number
+          first_response_at: string | null
+          resolution_state: string | null
+          resolution_seconds: number | null
+          resolution_target_seconds: number
+        }[]
+      }
+      get_sla_breach_summary: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          breached_count: number
+          first_response_breached: number
+          resolution_breached: number
+          unresolved_count: number
         }[]
       }
       accept_workspace_invite: {

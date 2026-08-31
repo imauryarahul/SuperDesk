@@ -1,4 +1,5 @@
 import { requireWorkspace } from '@/lib/auth'
+import { fetchConversationsSla } from '@/lib/sla'
 import { createClient } from '@/lib/supabase/server'
 
 import { InboxClient, type ConvRow } from './inbox-client'
@@ -49,13 +50,23 @@ export default async function InboxPage({
   }
 
   const { data } = await query
+  const conversations = (data ?? []) as unknown as ConvRow[]
 
   // All agents in this workspace, used to populate the assignee pickers.
-  const { data: agentsData } = await supabase
-    .from('profiles')
-    .select('id, full_name, email')
-    .eq('workspace_id', workspace.id)
-    .order('full_name', { ascending: true, nullsFirst: false })
+  // SLA is fetched for the whole page in one RPC, not per row, and only after
+  // the conversation ids are known — so it is sequential with the list query but
+  // parallel with the agent list.
+  const [agentsResult, slaMap] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select('id, full_name, email')
+      .eq('workspace_id', workspace.id)
+      .order('full_name', { ascending: true, nullsFirst: false }),
+    fetchConversationsSla(
+      supabase,
+      conversations.map((c) => c.id),
+    ),
+  ])
 
   return (
     <div className="flex h-full flex-col">
@@ -63,9 +74,10 @@ export default async function InboxPage({
         workspaceId={workspace.id}
         profileId={profile.id}
         profileName={profile.fullName ?? profile.email}
-        initialConversations={(data ?? []) as unknown as ConvRow[]}
+        initialConversations={conversations}
+        initialSla={Object.fromEntries(slaMap)}
         initialFilter={filter}
-        agents={(agentsData ?? []) as AgentProfile[]}
+        agents={(agentsResult.data ?? []) as AgentProfile[]}
       />
     </div>
   )

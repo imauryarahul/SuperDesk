@@ -3,6 +3,8 @@
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
 
+import { SlaBadge, SlaDot } from '@/components/sla-badge'
+import { fetchConversationsSla, type ConversationSla } from '@/lib/sla'
 import { createClient } from '@/lib/supabase/client'
 import type { Database } from '@/types/database'
 
@@ -48,6 +50,9 @@ interface Props {
   profileId: string
   profileName: string
   initialConversations: ConvRow[]
+  /** Keyed by conversation id. A plain object rather than a Map so it crosses
+   * the server-component boundary without relying on Map serialization. */
+  initialSla: Record<string, ConversationSla>
   initialFilter: InboxFilter
   agents: AgentProfile[]
 }
@@ -163,11 +168,15 @@ export function InboxClient({
   profileId,
   profileName,
   initialConversations,
+  initialSla,
   initialFilter,
   agents,
 }: Props) {
   const [filter, setFilter] = useState<InboxFilter>(initialFilter)
   const [conversations, setConversations] = useState<ConvRow[]>(initialConversations)
+  const [sla, setSla] = useState<Record<string, ConversationSla>>(initialSla)
+  /** Bumped by anything that stops or restarts an SLA clock, to force a refetch. */
+  const [slaNonce, setSlaNonce] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(initialConversations[0]?.id ?? null)
   const [messages, setMessages] = useState<MsgRow[]>([])
   const [visitorTyping, setVisitorTyping] = useState(false)
@@ -239,6 +248,38 @@ export function InboxClient({
       cancelled = true
     }
   }, [filter, workspaceId, profileId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- SLA for the visible rows ----
+  // One RPC for the whole list, re-run when the set of visible conversations or
+  // their statuses change, and on a 60s timer.
+  //
+  // The timer is not laziness: SLA state is computed from now(), so a
+  // conversation crosses from approaching into breached with no row change and
+  // therefore no realtime event to react to. Without it a badge would sit on the
+  // wrong colour until the agent navigated away.
+  const convSignature = conversations.map((c) => `${c.id}:${c.status}`).join(',')
+
+  useEffect(() => {
+    const ids = convSignature ? convSignature.split(',').map((entry) => entry.split(':')[0]!) : []
+    if (ids.length === 0) {
+      setSla({})
+      return
+    }
+
+    let cancelled = false
+    const load = () => {
+      void fetchConversationsSla(supabase, ids).then((map) => {
+        if (!cancelled) setSla(Object.fromEntries(map))
+      })
+    }
+
+    load()
+    const timer = setInterval(load, 60_000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [convSignature, slaNonce]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Load the selected thread ----
   useEffect(() => {
@@ -543,6 +584,9 @@ export function InboxClient({
               ),
             ),
           )
+          // A first reply stops the first-response clock, and the row's status
+          // has not changed, so nothing else would trigger a refetch.
+          setSlaNonce((n) => n + 1)
         } else {
           setMessages((prev) =>
             prev.map((m) => (m.id === clientId ? { ...m, optimistic: false, failed: true } : m)),
@@ -828,6 +872,7 @@ export function InboxClient({
 
                     <div className="mt-1 flex items-center justify-between gap-1">
                       <div className="flex min-w-0 items-center gap-1.5">
+                        <SlaDot sla={sla[conv.id]} />
                         <ChannelBadge channel={conv.channel} />
                         {filter.status === 'all' && conv.status !== 'open' && (
                           <StatusPill status={conv.status} />
@@ -881,6 +926,7 @@ export function InboxClient({
                   {contactLabel(selected.contacts)}
                 </p>
                 <ChannelBadge channel={selected.channel} />
+                <SlaBadge sla={sla[selected.id]} />
               </div>
               <p className="truncate text-xs text-slate-500">
                 {selected.subject ? `${selected.subject} · ` : ''}

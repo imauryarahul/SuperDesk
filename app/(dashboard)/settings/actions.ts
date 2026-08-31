@@ -112,6 +112,103 @@ export async function revokeInviteAction(formData: FormData): Promise<void> {
   revalidatePath('/settings')
 }
 
+// SLA targets and business hours ---------------------------------------------
+
+export type SlaSettingsFormState = FormState & { message?: string }
+
+/**
+ * Mirrors the CHECK constraints in migration 20260831110000 rather than
+ * inventing its own limits. The constraints are the real gate — this exists so
+ * an admin gets "Targets must be at least 1 minute" instead of a Postgres
+ * constraint name.
+ *
+ * The timezone is not validated against a list here: a trigger checks it
+ * against pg_timezone_names, which is the only authority that cannot go stale.
+ */
+const slaSettingsSchema = z
+  .object({
+    firstResponseTargetMinutes: z.coerce
+      .number()
+      .int('Use a whole number of minutes.')
+      .min(1, 'First-response target must be at least 1 minute.')
+      .max(86400, 'First-response target cannot exceed 60 days.'),
+    resolutionTargetMinutes: z.coerce
+      .number()
+      .int('Use a whole number of minutes.')
+      .min(1, 'Resolution target must be at least 1 minute.')
+      .max(1051200, 'Resolution target cannot exceed 2 years.'),
+    businessHoursStart: z
+      .string()
+      .regex(/^\d{2}:\d{2}$/, 'Enter opening time as HH:MM.'),
+    businessHoursEnd: z.string().regex(/^\d{2}:\d{2}$/, 'Enter closing time as HH:MM.'),
+    businessTimezone: z.string().trim().min(1, 'Pick a timezone.').max(64),
+    businessDays: z
+      .array(z.coerce.number().int().min(1).max(7))
+      .min(1, 'Pick at least one working day.')
+      .max(7),
+  })
+  .refine((v) => v.businessHoursEnd > v.businessHoursStart, {
+    message: 'Closing time must be after opening time. Overnight hours are not supported.',
+  })
+
+export async function updateSlaSettingsAction(
+  _prevState: SlaSettingsFormState,
+  formData: FormData,
+): Promise<SlaSettingsFormState> {
+  try {
+    const { workspace } = await requireAdmin()
+
+    const parsed = slaSettingsSchema.safeParse({
+      firstResponseTargetMinutes: formData.get('firstResponseTargetMinutes'),
+      resolutionTargetMinutes: formData.get('resolutionTargetMinutes'),
+      businessHoursStart: formData.get('businessHoursStart'),
+      businessHoursEnd: formData.get('businessHoursEnd'),
+      businessTimezone: formData.get('businessTimezone'),
+      // Checkboxes: absent entirely when none are ticked, which the schema
+      // rejects with a real message rather than silently storing an empty week.
+      businessDays: formData.getAll('businessDays'),
+    })
+
+    if (!parsed.success) {
+      throw new ActionError(parsed.error.issues[0]?.message ?? 'Check the form and try again.')
+    }
+    const values = parsed.data
+
+    // Written through the caller's own client, so workspaces_update_admin is
+    // what authorises it — requireAdmin above is the message, not the gate.
+    const { error } = await createClient()
+      .from('workspaces')
+      .update({
+        first_response_target_minutes: values.firstResponseTargetMinutes,
+        resolution_target_minutes: values.resolutionTargetMinutes,
+        business_hours_start: values.businessHoursStart,
+        business_hours_end: values.businessHoursEnd,
+        business_timezone: values.businessTimezone,
+        business_days: Array.from(new Set(values.businessDays)).sort((a, b) => a - b),
+      })
+      .eq('id', workspace.id)
+
+    if (error) {
+      // 22023 is what the timezone-validation trigger raises.
+      if (error.code === '22023') {
+        throw new ActionError(
+          `${values.businessTimezone} is not a timezone Postgres recognises. Use an IANA name such as Asia/Kolkata.`,
+        )
+      }
+      throw error
+    }
+
+    // Every SLA badge and the analytics breach count are derived from these
+    // numbers, so both pages have to be re-rendered, not just this one.
+    revalidatePath('/settings')
+    revalidatePath('/inbox')
+    revalidatePath('/analytics')
+    return { error: null, message: 'SLA targets and business hours saved.' }
+  } catch (error) {
+    return toFormError(error, 'updateSlaSettingsAction')
+  }
+}
+
 // Custom domains -------------------------------------------------------------
 
 export type CustomDomainFormState = FormState & { message?: string }

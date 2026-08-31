@@ -22,20 +22,11 @@ function toNumberOrNull(value: string | number | null): number | null {
 // Shared formatting helpers (used by the page component)
 // ---------------------------------------------------------------------------
 
-/** Converts a seconds value to a human-readable duration string. */
-export function formatDuration(seconds: number | null): string {
-  if (seconds === null || seconds < 0) return '—'
-  const s = Math.round(seconds)
-  if (s < 60) return `${s}s`
-  if (s < 3600) {
-    const m = Math.floor(s / 60)
-    const rem = s % 60
-    return rem === 0 ? `${m}m` : `${m}m ${rem}s`
-  }
-  const h = Math.floor(s / 3600)
-  const m = Math.round((s % 3600) / 60)
-  return m === 0 ? `${h}h` : `${h}h ${m}m`
-}
+/**
+ * Re-exported rather than defined here: the SLA badge needs the same formatting
+ * in a client component, and this module is server-only.
+ */
+export { formatDuration } from '@/lib/sla'
 
 /** Returns "HH:00 – HH+1:00" label for a 0–23 hour bucket. */
 export function formatHourLabel(hour: number): string {

@@ -9,6 +9,7 @@ import { revokeInviteAction } from './actions'
 import { CopyLink, CopySnippet } from './copy-link'
 import { CustomDomainPanel } from './custom-domain'
 import { InviteForm } from './invite-form'
+import { SlaSettingsPanel } from './sla-settings'
 
 export const metadata = { title: 'Settings · SuperDesk' }
 
@@ -36,6 +37,10 @@ export default async function SettingsPage() {
 
         <Card title="Chat widget">
           <WidgetEmbed workspaceId={workspace.id} />
+        </Card>
+
+        <Card title="SLA and business hours">
+          <SlaSettings canManage={isAdmin} />
         </Card>
 
         <Card title="Custom domain">
@@ -120,6 +125,39 @@ function WidgetEmbed({ workspaceId }: { workspaceId: string }) {
         <code className="rounded bg-slate-100 px-1">https://klassklub.com</code>.
       </p>
     </div>
+  )
+}
+
+/**
+ * Agents see these values read-only. The numbers drive the badges in their
+ * inbox, so hiding them entirely would leave the badge unexplained; only
+ * changing them is admin-only, enforced by the RLS policy on workspaces rather
+ * than by this component.
+ */
+async function SlaSettings({ canManage }: { canManage: boolean }) {
+  const { data, error } = await createClient()
+    .from('workspaces')
+    .select(
+      'first_response_target_minutes, resolution_target_minutes, business_hours_start, business_hours_end, business_days, business_timezone',
+    )
+    .maybeSingle()
+
+  if (error || !data) {
+    return <Alert tone="error">Could not load your SLA settings.</Alert>
+  }
+
+  return (
+    <SlaSettingsPanel
+      canManage={canManage}
+      settings={{
+        firstResponseTargetMinutes: data.first_response_target_minutes,
+        resolutionTargetMinutes: data.resolution_target_minutes,
+        businessHoursStart: data.business_hours_start,
+        businessHoursEnd: data.business_hours_end,
+        businessDays: data.business_days,
+        businessTimezone: data.business_timezone,
+      }}
+    />
   )
 }
 

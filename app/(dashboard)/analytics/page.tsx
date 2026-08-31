@@ -13,6 +13,7 @@ import {
   type HourBucket,
   type ResolutionRate,
 } from '@/lib/analytics'
+import { fetchSlaBreachSummary, type SlaBreachSummary } from '@/lib/sla'
 
 export const metadata = { title: 'Analytics' }
 
@@ -28,14 +29,16 @@ export default async function AnalyticsPage() {
   let resolutionRate: ResolutionRate
   let busiestHours: HourBucket[]
   let agentStats: AgentStat[]
+  let slaBreaches: SlaBreachSummary
   let fetchError: string | null = null
 
   try {
-    ;[firstResponse, resolutionRate, busiestHours, agentStats] = await Promise.all([
+    ;[firstResponse, resolutionRate, busiestHours, agentStats, slaBreaches] = await Promise.all([
       fetchFirstResponseStats(supabase),
       fetchResolutionRate(supabase),
       fetchBusiestHours(supabase),
       fetchAgentStats(supabase),
+      fetchSlaBreachSummary(supabase),
     ])
   } catch (err) {
     fetchError = err instanceof Error ? err.message : 'Unknown error'
@@ -43,6 +46,12 @@ export default async function AnalyticsPage() {
     resolutionRate = { resolvedCount: 0, totalCount: 0 }
     busiestHours = Array.from({ length: 24 }, (_, h) => ({ hour: h, messageCount: 0 }))
     agentStats = []
+    slaBreaches = {
+      breachedCount: 0,
+      firstResponseBreached: 0,
+      resolutionBreached: 0,
+      unresolvedCount: 0,
+    }
   }
 
   return (
@@ -64,7 +73,8 @@ export default async function AnalyticsPage() {
         ) : null}
 
         {/* ── Top stat cards ─────────────────────────────────────────── */}
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <SlaBreachCard data={slaBreaches} />
           <FirstResponseCard data={firstResponse} />
           <ResolutionRateCard data={resolutionRate} />
           <TotalConversationsCard data={resolutionRate} />
@@ -90,28 +100,83 @@ function StatCard({
   sub,
   tooltip,
   empty,
+  alert,
 }: {
   label: string
   value: string
   sub?: string
   tooltip: string
   empty?: boolean
+  /** Draws attention to a number that means something is wrong right now. */
+  alert?: boolean
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5">
+    <div
+      className={`rounded-xl border bg-white p-5 ${
+        alert ? 'border-red-200 bg-red-50/40' : 'border-slate-200'
+      }`}
+    >
       <div className="flex items-start justify-between gap-2">
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+        <p
+          className={`text-xs font-medium uppercase tracking-wide ${
+            alert ? 'text-red-700' : 'text-slate-500'
+          }`}
+        >
+          {label}
+        </p>
         <InfoTooltip content={tooltip} />
       </div>
       {empty ? (
         <p className="mt-3 text-sm text-slate-400">Not enough data yet</p>
       ) : (
         <>
-          <p className="mt-3 text-2xl font-semibold tabular-nums text-slate-900">{value}</p>
+          <p
+            className={`mt-3 text-2xl font-semibold tabular-nums ${
+              alert ? 'text-red-700' : 'text-slate-900'
+            }`}
+          >
+            {value}
+          </p>
           {sub ? <p className="mt-1 text-xs text-slate-500">{sub}</p> : null}
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * Unresolved conversations past their SLA target, right now. Resolved
+ * conversations that were closed late are excluded on purpose — this is a
+ * worklist number, and including history would make it only ever grow.
+ */
+function SlaBreachCard({ data }: { data: SlaBreachSummary }) {
+  const empty = data.unresolvedCount === 0
+
+  const breachParts = [
+    data.firstResponseBreached > 0
+      ? `${data.firstResponseBreached.toLocaleString()} first response`
+      : null,
+    data.resolutionBreached > 0
+      ? `${data.resolutionBreached.toLocaleString()} resolution`
+      : null,
+  ].filter(Boolean)
+
+  const sub =
+    empty
+      ? undefined
+      : breachParts.length > 0
+        ? `of ${data.unresolvedCount.toLocaleString()} open · ${breachParts.join(' · ')}`
+        : `of ${data.unresolvedCount.toLocaleString()} open`
+
+  return (
+    <StatCard
+      label="SLA breaches"
+      value={data.breachedCount.toLocaleString()}
+      sub={sub}
+      tooltip="Open conversations past their SLA deadline. Uses your business-hours schedule. Updates each time you load this page."
+      empty={empty}
+      alert={data.breachedCount > 0}
+    />
   )
 }
 
@@ -125,9 +190,9 @@ function FirstResponseCard({ data }: { data: FirstResponseStats }) {
       sub={
         empty
           ? undefined
-          : `Median ${formatDuration(data.medianSeconds)} · P95 ${formatDuration(data.p95Seconds)} · ${data.measuredCount.toLocaleString()} conversations measured`
+          : `Typical ${formatDuration(data.medianSeconds)} · 95% within ${formatDuration(data.p95Seconds)} · ${data.measuredCount.toLocaleString()} conversations`
       }
-      tooltip="Time from the first contact message to the first agent reply. Simplification: no adjustment for snoozed time; no per-reopen recalculation — just the first-ever agent reply vs the first-ever contact message."
+      tooltip="Time from a customer's first message to the first agent reply. Snooze and reopen aren't included."
       empty={empty}
     />
   )
@@ -147,7 +212,7 @@ function ResolutionRateCard({ data }: { data: ResolutionRate }) {
           ? undefined
           : `${data.resolvedCount.toLocaleString()} of ${data.totalCount.toLocaleString()} conversations resolved`
       }
-      tooltip="Percentage of all conversations that are currently resolved (resolved ÷ total). A conversation that was resolved and later reopened counts as open until it is resolved again."
+      tooltip="% of conversations currently resolved. Reopened chats count as open until closed again."
       empty={empty}
     />
   )
@@ -166,7 +231,7 @@ function TotalConversationsCard({ data }: { data: ResolutionRate }) {
           ? undefined
           : `${data.resolvedCount.toLocaleString()} resolved · ${open.toLocaleString()} open / snoozed`
       }
-      tooltip="Count of every conversation in this workspace, across chat and email. The subtitle splits that total into currently resolved vs open or snoozed. All-time; no date range filter."
+      tooltip="All conversations in this workspace — chat and email. All-time total, no date filter."
       empty={empty}
     />
   )
@@ -258,7 +323,7 @@ function AgentStatsSection({ data }: { data: AgentStat[] }) {
                 </th>
                 <th
                   className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wide text-slate-500"
-                  title="Average time from first contact message to first agent reply, for conversations assigned to this agent."
+                  title="Time from the customer's first message to the first agent reply."
                 >
                   Avg first response ⓘ
                 </th>
