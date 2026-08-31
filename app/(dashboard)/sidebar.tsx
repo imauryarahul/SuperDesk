@@ -10,6 +10,7 @@ import type { UserRole } from '@/lib/auth'
 const NAV_ITEMS = [
   { href: '/inbox', label: 'Inbox' },
   { href: '/knowledge-base', label: 'Knowledge Base' },
+  { href: '/analytics', label: 'Analytics' },
   { href: '/settings', label: 'Settings' },
 ]
 

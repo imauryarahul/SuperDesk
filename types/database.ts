@@ -65,6 +65,7 @@ export type Database = {
           created_at: string
           id: string
           last_message_at: string
+          resolved_at: string | null
           status: Database["public"]["Enums"]["conversation_status"]
           subject: string | null
           updated_at: string
@@ -80,6 +81,7 @@ export type Database = {
           created_at?: string
           id?: string
           last_message_at?: string
+          resolved_at?: string | null
           status?: Database["public"]["Enums"]["conversation_status"]
           subject?: string | null
           updated_at?: string
@@ -95,6 +97,7 @@ export type Database = {
           created_at?: string
           id?: string
           last_message_at?: string
+          resolved_at?: string | null
           status?: Database["public"]["Enums"]["conversation_status"]
           subject?: string | null
           updated_at?: string
@@ -400,6 +403,41 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_analytics_agent_stats: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          agent_id: string
+          full_name: string | null
+          agent_email: string
+          conversations_resolved: number
+          /** Postgres `numeric` arrives over the wire as a string; coerce before use. */
+          avg_first_response_secs: string | null
+        }[]
+      }
+      get_analytics_busiest_hours: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          hour: number
+          message_count: number
+        }[]
+      }
+      get_analytics_first_response: {
+        Args: Record<PropertyKey, never>
+        /** The three `numeric` columns arrive over the wire as strings; coerce before use. */
+        Returns: {
+          avg_seconds: string | null
+          median_seconds: string | null
+          p95_seconds: string | null
+          measured_count: number
+        }[]
+      }
+      get_analytics_resolution_rate: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          resolved_count: number
+          total_count: number
+        }[]
+      }
       accept_workspace_invite: {
         Args: {
           p_auth_user_id: string

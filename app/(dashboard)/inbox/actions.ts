@@ -193,6 +193,7 @@ async function sendEmailReply(
 
 /**
  * Sets conversation status to open, snoozed, or resolved.
+ * `resolved_at` is maintained by a DB trigger on status changes — do not set it here.
  * Broadcasts the updated row to the workspace inbox channel so all connected
  * agents see the change without a page refresh.
  */

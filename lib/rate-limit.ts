@@ -12,20 +12,22 @@ import { createAdminClient } from './supabase/admin'
  * meter legitimate power users. A Redis-backed sliding window would be more
  * precise at scale; that is a documented scope simplification for this phase.
  *
- * @param ip        Caller's IP (use x-forwarded-for on Vercel).
+ * @param key       Identity being throttled — an IP for anonymous traffic
+ *                  (use x-forwarded-for on Vercel) or a workspace ID for
+ *                  cost-control limits.
  * @param scope     Identifies the bucket, e.g. 'ws:abc:contact'.
  * @param windowSec Window size in seconds.
  * @param max       Maximum requests allowed in one window.
  */
 export async function checkRateLimit(
-  ip: string,
+  key: string,
   scope: string,
   windowSec: number,
   max: number,
 ): Promise<boolean> {
   const admin = createAdminClient()
   const { data, error } = await admin.rpc('increment_rate_limit', {
-    p_ip: ip,
+    p_ip: key,
     p_scope: scope,
     p_window_sec: windowSec,
     p_max: max,

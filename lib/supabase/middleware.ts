@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { publicSupabaseConfig } from '@/lib/env'
 import type { Database } from '@/types/database'
 
-const PROTECTED_PREFIXES = ['/inbox', '/knowledge-base', '/settings']
+const PROTECTED_PREFIXES = ['/inbox', '/knowledge-base', '/analytics', '/settings']
 const AUTH_ONLY_PATHS = ['/login', '/signup']
 
 /**
