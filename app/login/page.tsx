@@ -1,3 +1,4 @@
+import Image from 'next/image'
 import Link from 'next/link'
 import { BarChart3, BookOpenText, Globe2, Inbox, MessageSquareText, Sparkles } from 'lucide-react'
 
@@ -37,24 +38,24 @@ export default function LoginPage({
 
   return (
     <main className="grid min-h-screen lg:grid-cols-2">
-      <section className="relative hidden flex-col justify-between overflow-hidden bg-slate-900 px-12 py-12 text-white lg:flex">
+      <section className="relative hidden flex-col justify-between overflow-hidden px-12 py-12 text-slate-800 lg:flex" style={{ background: 'linear-gradient(135deg, #e8f4fd 0%, #dbeeff 40%, #c7e2f9 70%, #d4eafa 100%)' }}>
         <div
-          className="pointer-events-none absolute inset-0 opacity-40"
+          className="pointer-events-none absolute inset-0"
           style={{
             backgroundImage:
-              'radial-gradient(circle at 20% 20%, rgba(255,255,255,0.10), transparent 40%), radial-gradient(circle at 80% 70%, rgba(255,255,255,0.08), transparent 45%)',
+              'radial-gradient(circle at 15% 15%, rgba(59,130,246,0.12), transparent 45%), radial-gradient(circle at 85% 75%, rgba(99,179,237,0.10), transparent 50%)',
           }}
         />
 
         <div className="relative">
-          <span className="text-lg font-semibold tracking-tight">SuperDesk</span>
+          <Image src="/logo.png" alt="SuperDesk" width={180} height={48} className="h-10 w-auto" priority />
         </div>
 
         <div className="relative max-w-md">
-          <h1 className="text-3xl font-semibold leading-tight tracking-tight">
+          <h1 className="text-3xl font-semibold leading-tight tracking-tight text-slate-900">
             One place for every customer conversation.
           </h1>
-          <p className="mt-3 text-sm leading-relaxed text-slate-300">
+          <p className="mt-3 text-sm leading-relaxed text-slate-600">
             Chat, email, and a knowledge base — with AI summaries and SLA tracking so nothing falls
             through the cracks.
           </p>
@@ -62,19 +63,19 @@ export default function LoginPage({
           <ul className="mt-9 space-y-5">
             {features.map(({ icon: Icon, title, description }) => (
               <li key={title} className="flex gap-3.5">
-                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10">
+                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-600">
                   <Icon className="h-4 w-4" aria-hidden />
                 </span>
                 <div>
-                  <p className="text-sm font-medium text-white">{title}</p>
-                  <p className="mt-0.5 text-sm leading-relaxed text-slate-400">{description}</p>
+                  <p className="text-sm font-medium text-slate-900">{title}</p>
+                  <p className="mt-0.5 text-sm leading-relaxed text-slate-600">{description}</p>
                 </div>
               </li>
             ))}
           </ul>
         </div>
 
-        <div className="relative flex items-center gap-2 text-xs text-slate-400">
+        <div className="relative flex items-center gap-2 text-xs text-slate-500">
           <Globe2 className="h-3.5 w-3.5" aria-hidden />
           <BarChart3 className="h-3.5 w-3.5" aria-hidden />
           <span>Custom domains &amp; analytics, included.</span>
@@ -83,8 +84,8 @@ export default function LoginPage({
 
       <section className="flex flex-col items-center justify-center px-4 py-12">
         <div className="w-full max-w-sm">
-          <Link href="/" className="mb-8 block text-lg font-semibold tracking-tight text-slate-900 lg:hidden">
-            SuperDesk
+          <Link href="/" className="mb-8 block lg:hidden">
+            <Image src="/logo.png" alt="SuperDesk" width={160} height={42} className="h-9 w-auto" priority />
           </Link>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm">
